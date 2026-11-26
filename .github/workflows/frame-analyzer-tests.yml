@@ -31,3 +31,18 @@ jobs:
           python-version: '3.11'
       - name: Run Frame Analyzer regression tests
         run: python -B -m unittest discover -s tools/frame_analyzer -p 'test_*.py' -v
+      - name: Check embedded report JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("tools/frame_analyzer/veyra_frame_analyzer.py").read_text(encoding="utf-8")
+          template_start = source.index('REPORT_TEMPLATE = r"""')
+          data_script_end = source.index('</script>', template_start)
+          script_start = source.index('<script>\\n', data_script_end) + len('<script>\\n')
+          script_end = source.index('</script>', script_start)
+          Path("/tmp/veyra-frame-analyzer-report.js").write_text(
+              source[script_start:script_end], encoding="utf-8"
+          )
+          PY
+          node --check /tmp/veyra-frame-analyzer-report.js
