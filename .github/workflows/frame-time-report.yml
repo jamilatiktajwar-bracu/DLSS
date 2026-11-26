@@ -1,0 +1,30 @@
+name: Frame-time report tool tests
+
+on:
+  pull_request:
+    paths:
+      - "scripts/dlss-frame-time-report.py"
+      - "scripts/tests/test_frame_time_report.py"
+      - ".github/workflows/frame-time-report.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/dlss-frame-time-report.py"
+      - "scripts/tests/test_frame_time_report.py"
+      - ".github/workflows/frame-time-report.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run unit tests
+        run: python -m unittest discover -s scripts/tests -p "test_frame_time_report.py" -v
+      - name: Check script syntax
+        run: python -m py_compile scripts/dlss-frame-time-report.py
