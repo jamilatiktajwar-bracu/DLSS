@@ -9,7 +9,7 @@ from pathlib import Path
 
 from benchmark_frame_analyzer import run_once, write_synthetic_trace
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
-                                  validate_output_paths, write_report)
+                                  normalize_event, validate_output_paths, write_report)
 
 
 BASE = 70_000_000
@@ -140,6 +140,13 @@ class SyntheticBenchmarkTests(unittest.TestCase):
 
 
 class TraceTests(unittest.TestCase):
+    def test_event_normalization_reuses_the_reader_record(self):
+        raw = {"event": "Source", "host": "70001000", "session": "", "source": "4"}
+        normalized = normalize_event(raw, 1)
+        self.assertIs(normalized, raw)
+        self.assertEqual(normalized, {"event": "Source", "host": 70001000,
+                                      "source": 4, "event_number": 1})
+
     def test_incomplete_matching_count_rejected(self):
         with self.assertRaisesRegex(ValueError, "complete=1"):
             read_native(io.StringIO(example_trace(complete=False)))
