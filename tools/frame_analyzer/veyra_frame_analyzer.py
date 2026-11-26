@@ -906,6 +906,9 @@ function drawChart() {
         context.fill()
         plotted.push(point)
     }
+    // Frame rows can be grouped by role/scope rather than chart time. Keep
+    // the hover index sorted by its actual x-coordinate before binary search.
+    plotted.sort((a, b) => a.x - b.x)
     sweep = [left, left + plotW, top, top + plotH]
 }
 function pointAt(event) {

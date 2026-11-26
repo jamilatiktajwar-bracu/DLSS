@@ -24,6 +24,9 @@ const assert = require('node:assert/strict');
     assert.ok(await page.locator('#detail-grid table').count() >= 1,
       'selecting a frame should render detail tables');
 
+    // Select a metric populated by the synthetic fixture so the canvas has
+    // multiple points to hit regardless of the report's default metric.
+    await page.locator('#metric').selectOption('present_api');
     const canvas = page.locator('#chart');
     const bounds = await canvas.boundingBox();
     assert.ok(bounds, 'chart canvas should be visible');
