@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Schema and per-frame correlation fixtures. All rows are synthetic."""
 
+import argparse
 import csv
 import io
 import tempfile
 import unittest
 from pathlib import Path
 
-from benchmark_frame_analyzer import measure_peak_memory, run_once, write_synthetic_trace
+from benchmark_frame_analyzer import (measure_peak_memory, positive_finite_float,
+                                      run_once, write_synthetic_trace)
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
                                   normalize_event, validate_output_paths, write_report)
 
@@ -128,6 +130,13 @@ class CsvExportTests(unittest.TestCase):
 
 
 class SyntheticBenchmarkTests(unittest.TestCase):
+    def test_benchmark_fps_arguments_must_be_finite_and_positive(self):
+        for value in ("nan", "inf", "-inf", "0", "-1"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    positive_finite_float(value)
+        self.assertEqual(positive_finite_float("59.94"), 59.94)
+
     def test_benchmark_fixture_preserves_all_source_and_output_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
             trace = Path(temporary) / "synthetic.csv"
