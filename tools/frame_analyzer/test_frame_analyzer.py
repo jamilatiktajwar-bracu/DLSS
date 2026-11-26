@@ -142,10 +142,14 @@ class SyntheticBenchmarkTests(unittest.TestCase):
             trace = Path(temporary) / "synthetic.csv"
             write_synthetic_trace(trace, 4)
             result = run_once(trace, 60, 60, expected_frames=4)
+            trace_mode_result = run_once(trace, 60, 60)
         self.assertEqual(result["events"], 12)
         self.assertEqual(result["source_rows"], 4)
         self.assertEqual(result["output_rows"], 4)
         self.assertEqual(result["frame_rows"], 8)
+        self.assertEqual(trace_mode_result["events"], 12)
+        self.assertEqual(trace_mode_result["source_rows"], 4)
+        self.assertEqual(trace_mode_result["output_rows"], 4)
 
     def test_optional_memory_profile_reports_traced_peak_and_complete_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
