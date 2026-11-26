@@ -24,29 +24,19 @@ const assert = require('node:assert/strict');
     assert.ok(await page.locator('#detail-grid table').count() >= 1,
       'selecting a frame should render detail tables');
 
-    // Select a metric populated by the synthetic fixture. Locate an actual
-    // rendered data-point pixel rather than guessing chart coordinates.
+    // Select a metric populated by the synthetic fixture. Read a real plotted
+    // point in CSS-pixel coordinates so the browser input targets the same
+    // coordinate space used by the report's pointer handlers.
     await page.locator('#metric').selectOption('present_prepare_wall');
     const canvas = page.locator('#chart');
     const bounds = await canvas.boundingBox();
     assert.ok(bounds, 'chart canvas should be visible');
-    const point = await canvas.evaluate(node => {
-      const ctx = node.getContext('2d');
-      const { data, width, height } = ctx.getImageData(0, 0, node.width, node.height);
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const offset = (y * width + x) * 4;
-          // The normal (non-selected, non-anomalous) data-point fill is #85d6d6.
-          if (data[offset] === 0x85 && data[offset + 1] === 0xd6
-              && data[offset + 2] === 0xd6 && data[offset + 3] === 255) {
-            return { x: x / (window.devicePixelRatio || 1),
-              y: y / (window.devicePixelRatio || 1) };
-          }
-        }
-      }
-      return null;
+    const point = await canvas.evaluate(() => {
+      const candidate = plotted.find(item => Number.isFinite(item.x)
+        && Number.isFinite(item.y) && item.row && item.row.source);
+      return candidate ? { x: candidate.x, y: candidate.y } : null;
     });
-    assert.ok(point, 'chart should contain at least one rendered data point');
+    assert.ok(point, 'chart should contain at least one plotted data point');
     await page.mouse.move(bounds.x + point.x, bounds.y + point.y);
     const hover = page.locator('#hover');
     await page.waitForFunction(() => document.querySelector('#hover').textContent.trim().length > 0);
