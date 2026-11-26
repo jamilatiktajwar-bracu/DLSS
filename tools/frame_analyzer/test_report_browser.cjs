@@ -37,11 +37,23 @@ const assert = require('node:assert/strict');
       return candidate ? { x: candidate.x, y: candidate.y } : null;
     });
     assert.ok(point, 'chart should contain at least one plotted data point');
-    await page.mouse.move(bounds.x + point.x, bounds.y + point.y);
+    // Dispatch through the canvas DOM event path using its own bounding box;
+    // this avoids host mouse-coordinate rounding at fractional CSS scales.
+    await canvas.evaluate((node, target) => {
+      const rect = node.getBoundingClientRect();
+      node.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, clientX: rect.left + target.x, clientY: rect.top + target.y
+      }));
+    }, point);
     const hover = page.locator('#hover');
     await page.waitForFunction(() => document.querySelector('#hover').textContent.trim().length > 0);
     assert.match((await hover.textContent()).trim(), /source/);
-    await page.mouse.click(bounds.x + point.x, bounds.y + point.y);
+    await canvas.evaluate((node, target) => {
+      const rect = node.getBoundingClientRect();
+      node.dispatchEvent(new MouseEvent('click', {
+        bubbles: true, clientX: rect.left + target.x, clientY: rect.top + target.y
+      }));
+    }, point);
     assert.match(await detail.textContent(), /source/,
       'clicking a plotted point should select a frame');
     assert.equal(errors.length, 0, errors.join('\\n'));
