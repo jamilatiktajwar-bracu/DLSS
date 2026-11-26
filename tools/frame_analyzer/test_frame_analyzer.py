@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmark_frame_analyzer import run_once, write_synthetic_trace
+from benchmark_frame_analyzer import measure_peak_memory, run_once, write_synthetic_trace
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
                                   normalize_event, validate_output_paths, write_report)
 
@@ -137,6 +137,16 @@ class SyntheticBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["source_rows"], 4)
         self.assertEqual(result["output_rows"], 4)
         self.assertEqual(result["frame_rows"], 8)
+
+    def test_optional_memory_profile_reports_traced_peak_and_complete_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / "synthetic.csv"
+            write_synthetic_trace(trace, 4)
+            result = measure_peak_memory(trace, 60, 60)
+        self.assertEqual(result["events"], 12)
+        self.assertEqual(result["frame_rows"], 8)
+        self.assertGreater(result["peak_traced_bytes"], 0)
+        self.assertEqual(result["scope"], "python_tracemalloc_only")
 
 
 class TraceTests(unittest.TestCase):
