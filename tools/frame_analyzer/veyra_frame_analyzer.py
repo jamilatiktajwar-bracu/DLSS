@@ -61,7 +61,13 @@ def number(value, label, numeric_type=int):
 
 
 def normalize_event(row, index):
-    event = {key: value for key, value in row.items() if value not in (None, "")}
+    # The CSV readers create a fresh dict for each record. Normalize it in
+    # place instead of allocating a second dict per event; large captures can
+    # contain millions of these short-lived intermediate objects.
+    for key in tuple(row):
+        if row[key] in (None, ""):
+            del row[key]
+    event = row
     if not event.get("event") or "host" not in event:
         raise ValueError(f"Event {index} is missing its kind or host timestamp")
     for key in event.keys() & NUMERIC_FIELDS:
@@ -269,6 +275,7 @@ def output_records(outputs, host_origin, scale, legacy):
         items.sort(key=lambda item: item["host"])
         ready_observations = [event["host"] for event in items if event["event"] == "FrameReady"]
         terminal = [event for event in items if event["event"] in {"Present", "Discarded"}]
+        terminal_ids = {id(event) for event in terminal}
         anchor = terminal or [event for event in items if event["event"] == "FrameReady"][:1] or items[:1]
         for event in anchor:
             present = event["event"] == "Present"
@@ -296,7 +303,7 @@ def output_records(outputs, host_origin, scale, legacy):
             row["stages"] = [sample for item in items if item["event"] == "Cpu"
                              if (sample := stage_sample(item)) is not None]
             row["events"] = [event["event_number"]] + [other["event_number"] for other in items
-                                                      if other not in terminal and other is not event]
+                                                      if id(other) not in terminal_ids and other is not event]
             if len(terminal) > 1:
                 row["issues"].append("repeated_output_identity")
             if not present and not discarded:
