@@ -1046,7 +1046,7 @@ def validate_output_paths(trace, destination):
     output_paths = [destination.joinpath(name) for name in ("summary.json", "report.html", "frames.csv")]
     if trace.resolve() in {path.resolve() for path in output_paths}:
         raise ValueError("An output file would overwrite the input trace")
-    existing = [path for path in output_paths if path.exists()]
+    existing = [path for path in output_paths if path.exists() or path.is_symlink()]
     if existing:
         names = ", ".join(path.name for path in existing)
         raise ValueError(f"Refusing to overwrite existing analysis output(s): {names}")

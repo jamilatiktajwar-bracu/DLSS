@@ -107,6 +107,24 @@ class CsvExportTests(unittest.TestCase):
             validate_output_paths(trace, clean_destination)
             self.assertFalse(clean_destination.exists())
 
+    def test_broken_output_symlink_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace = root / "capture.csv"
+            trace.write_text("private trace", encoding="utf-8")
+            destination = root / "capture.analysis"
+            destination.mkdir()
+            broken_link = destination / "report.html"
+            try:
+                broken_link.symlink_to(root / "missing-report.html")
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"Symlinks unavailable: {error}")
+            self.assertFalse(broken_link.exists())
+            self.assertTrue(broken_link.is_symlink())
+            with self.assertRaisesRegex(ValueError, "report.html"):
+                validate_output_paths(trace, destination)
+            self.assertTrue(broken_link.is_symlink())
+
 
 class TraceTests(unittest.TestCase):
     def test_incomplete_matching_count_rejected(self):
