@@ -33,8 +33,8 @@ const assert = require('node:assert/strict');
     assert.ok(bounds, 'chart canvas should be visible');
     const point = await canvas.evaluate(() => {
       const candidate = plotted.find(item => Number.isFinite(item.x)
-        && Number.isFinite(item.y) && item.row && item.row.source);
-      return candidate ? { x: candidate.x, y: candidate.y } : null;
+        && Number.isFinite(item.y) && item.row && item.row.source && item.row !== selected);
+      return candidate ? { x: candidate.x, y: candidate.y, source: candidate.row.source } : null;
     });
     assert.ok(point, 'chart should contain at least one plotted data point');
     // Dispatch through the canvas DOM event path using its own bounding box;
@@ -48,14 +48,19 @@ const assert = require('node:assert/strict');
     const hover = page.locator('#hover');
     await page.waitForFunction(() => document.querySelector('#hover').textContent.trim().length > 0);
     assert.match((await hover.textContent()).trim(), /source/);
+    const previousDetail = await detail.textContent();
     await canvas.evaluate((node, target) => {
       const rect = node.getBoundingClientRect();
       node.dispatchEvent(new MouseEvent('click', {
         bubbles: true, clientX: rect.left + target.x, clientY: rect.top + target.y
       }));
     }, point);
-    assert.match(await detail.textContent(), /source/,
-      'clicking a plotted point should select a frame');
+    await page.waitForFunction(previous => document.querySelector('#detail-message').textContent !== previous,
+      previousDetail);
+    assert.notEqual(await detail.textContent(), previousDetail,
+      'clicking a different plotted point should change the selected frame');
+    assert.match(await detail.textContent(), new RegExp('source ' + point.source + '(?:\\\\D|$)'),
+      'chart selection should open details for the clicked source');
     assert.equal(errors.length, 0, errors.join('\\n'));
     console.log('Browser report smoke and chart/table interaction checks passed.');
   } finally {
