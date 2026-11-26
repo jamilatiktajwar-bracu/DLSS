@@ -60,7 +60,7 @@ class CsvExportTests(unittest.TestCase):
         report = {"frames": [{
             "time_ms": -1.25,
             "role": "=HYPERLINK(\"https://example.invalid\",\"click\")",
-            "source_a": " \\t+SUM(1,1)",
+            "source_a": " \t+SUM(1,1)",
             "issues": ["@SUM(1,1)", "-not-a-number"],
             "metrics_ms": {"negative_measurement": -2.5},
         }]}
@@ -69,7 +69,7 @@ class CsvExportTests(unittest.TestCase):
             with Path(temporary, "frames.csv").open(encoding="utf-8-sig", newline="") as file:
                 row = next(csv.DictReader(file))
         self.assertEqual(row["role"], "'=HYPERLINK(\"https://example.invalid\",\"click\")")
-        self.assertEqual(row["source_a"], "' \\t+SUM(1,1)")
+        self.assertEqual(row["source_a"], "' \t+SUM(1,1)")
         self.assertEqual(row["issues"], "[\"'@SUM(1,1)\",\"'-not-a-number\"]")
         self.assertEqual(row["time_ms"], "-1.25")
         self.assertEqual(row["metrics_ms"], "{\"negative_measurement\":-2.5}")

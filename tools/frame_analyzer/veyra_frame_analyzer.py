@@ -1004,7 +1004,7 @@ def spreadsheet_safe_cell(value):
     """Prefix formula-like text so spreadsheet applications treat it as data."""
     if not isinstance(value, str):
         return value
-    if value.lstrip(" \\t\\r\\n\\v\\f").startswith(("=", "+", "-", "@")):
+    if value.lstrip(" \t\r\n\v\f").startswith(("=", "+", "-", "@")):
         return "'" + value
     return value
 
