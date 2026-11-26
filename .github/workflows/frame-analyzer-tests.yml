@@ -46,3 +46,41 @@ jobs:
           )
           PY
           node --check /tmp/veyra-frame-analyzer-report.js
+
+  browser-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Install pinned Playwright
+        run: npm install --no-save --no-audit --no-fund playwright@1.56.1
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Generate deterministic synthetic report
+        env:
+          REPORT_DIR: ${{ runner.temp }}/frame-analyzer-browser
+        run: |
+          PYTHONPATH=tools/frame_analyzer python - <<'PY'
+          import io
+          import os
+          from pathlib import Path
+          from test_frame_analyzer import example_trace
+          from veyra_frame_analyzer import analyze, read_native, write_report
+
+          metadata, events = read_native(io.StringIO(example_trace()))
+          report = analyze(metadata, events, input_fps=100, output_fps=200,
+                           warmup_seconds=0.03, tail_seconds=0.001)
+          destination = Path(os.environ["REPORT_DIR"])
+          destination.mkdir(parents=True, exist_ok=True)
+          write_report(destination, report)
+          PY
+          echo "REPORT_HTML=${{ runner.temp }}/frame-analyzer-browser/report.html" >> "$GITHUB_ENV"
+      - name: Exercise report in headless Chromium
+        run: node tools/frame_analyzer/test_report_browser.cjs
+      - name: Run synthetic benchmark smoke test
+        run: python tools/frame_analyzer/benchmark_frame_analyzer.py --frames 1000 --repeat 1
