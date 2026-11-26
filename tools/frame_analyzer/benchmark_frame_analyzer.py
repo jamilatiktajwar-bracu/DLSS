@@ -7,6 +7,7 @@ import csv
 import json
 import tempfile
 import time
+import tracemalloc
 from pathlib import Path
 
 from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_trace
@@ -86,12 +87,33 @@ def run_once(path, input_fps, output_fps, expected_frames):
     }
 
 
+def measure_peak_memory(path, input_fps, output_fps):
+    """Measure Python-traced peak allocations separately from wall-clock timings."""
+    tracemalloc.start()
+    try:
+        metadata, events = read_trace(path)
+        report = analyze(metadata, events, input_fps=input_fps, output_fps=output_fps,
+                         warmup_seconds=0, tail_seconds=0)
+        current_bytes, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return {
+        "current_traced_bytes": current_bytes,
+        "peak_traced_bytes": peak_bytes,
+        "events": len(events),
+        "frame_rows": len(report["frames"]),
+        "scope": "python_tracemalloc_only",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frames", type=int, default=10000, help="synthetic source frames (default: 10000)")
     parser.add_argument("--repeat", type=int, default=3, help="measured iterations (default: 3)")
     parser.add_argument("--input-fps", type=float, default=60)
     parser.add_argument("--output-fps", type=float, default=60)
+    parser.add_argument("--measure-memory", action="store_true",
+                        help="run a separate tracemalloc peak-allocation pass (not process RSS)")
     args = parser.parse_args()
     if args.frames < 1 or args.repeat < 1 or args.input_fps <= 0 or args.output_fps <= 0:
         parser.error("frames, repeat, and FPS values must be positive")
@@ -99,6 +121,8 @@ def main():
         trace = Path(temporary) / "synthetic-trace.csv"
         write_synthetic_trace(trace, args.frames)
         results = [run_once(trace, args.input_fps, args.output_fps, args.frames) for _ in range(args.repeat)]
+        memory = (measure_peak_memory(trace, args.input_fps, args.output_fps)
+                  if args.measure_memory else None)
     print(json.dumps({
         "benchmark": "synthetic-frame-analyzer-v1",
         "synthetic_only": True,
@@ -107,6 +131,7 @@ def main():
         "input_fps": args.input_fps,
         "output_fps": args.output_fps,
         "results": results,
+        "memory": memory,
     }, indent=2))
 
 
