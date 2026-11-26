@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_legacy, read_native, write_report
+from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
+                                  validate_output_paths, write_report)
 
 
 BASE = 70_000_000
@@ -87,6 +88,24 @@ class CsvExportTests(unittest.TestCase):
         self.assertNotIn(attack, html)
         self.assertIn(r"\u003c/script\u003e\u003cscript\u003eglobalThis.pwned=1"
                       r"\u003c/script\u003e\u0026", html)
+
+
+    def test_existing_analysis_outputs_are_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace = root / "capture.csv"
+            trace.write_text("private trace", encoding="utf-8")
+            destination = root / "capture.analysis"
+            destination.mkdir()
+            prior = destination / "frames.csv"
+            prior.write_text("keep this report", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Refusing to overwrite"):
+                validate_output_paths(trace, destination)
+            self.assertEqual(prior.read_text(encoding="utf-8"), "keep this report")
+
+            clean_destination = root / "clean.analysis"
+            validate_output_paths(trace, clean_destination)
+            self.assertFalse(clean_destination.exists())
 
 
 class TraceTests(unittest.TestCase):

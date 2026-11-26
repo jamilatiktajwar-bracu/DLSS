@@ -1042,6 +1042,16 @@ def write_report(directory, report):
                                                  encoding="utf-8")
 
 
+def validate_output_paths(trace, destination):
+    output_paths = [destination.joinpath(name) for name in ("summary.json", "report.html", "frames.csv")]
+    if trace.resolve() in {path.resolve() for path in output_paths}:
+        raise ValueError("An output file would overwrite the input trace")
+    existing = [path for path in output_paths if path.exists()]
+    if existing:
+        names = ", ".join(path.name for path in existing)
+        raise ValueError(f"Refusing to overwrite existing analysis output(s): {names}")
+
+
 def bounded_float(text, *, minimum):
     value = number(text, "analysis option", float)
     if value < minimum:
@@ -1067,10 +1077,8 @@ def main():
         metadata, events = read_trace(args.trace)
         report = analyze(metadata, events, args.input_fps, args.output_fps, args.warmup, args.trim_end)
         report["source_file"] = args.trace.name
-        # Refuse an explicit output directory that would overwrite the input.
-        if args.trace.resolve() in {destination.joinpath(name).resolve()
-                                    for name in ("summary.json", "report.html", "frames.csv")}:
-            raise ValueError("An output file would overwrite the input trace")
+        # Preserve prior analysis artifacts unless the user chooses a clean destination.
+        validate_output_paths(args.trace, destination)
         write_report(destination, report)
     except (ValueError, OSError, csv.Error) as error:
         print(f"Cannot analyze frame trace: {error}", file=sys.stderr)
