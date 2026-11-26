@@ -76,7 +76,7 @@ class CsvExportTests(unittest.TestCase):
         self.assertEqual(row["issues"], "[\"@SUM(1,1)\",\"-not-a-number\"]")
         self.assertEqual(row["time_ms"], "-1.25")
         self.assertEqual(row["metrics_ms"], "{\"negative_measurement\":-2.5}")
-        self.assertEqual(row["discard_reason"], "' -=1+1".replace("' ", "'"))
+        self.assertEqual(row["discard_reason"], "'-=1+1")
 
 
 class TraceTests(unittest.TestCase):
