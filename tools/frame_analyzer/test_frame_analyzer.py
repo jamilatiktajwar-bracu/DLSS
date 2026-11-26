@@ -79,6 +79,16 @@ class CsvExportTests(unittest.TestCase):
         self.assertEqual(row["discard_reason"], "'-=1+1")
 
 
+    def test_report_json_cannot_close_embedded_script_element(self):
+        attack = "</script><script>globalThis.pwned=1</script>&"
+        with tempfile.TemporaryDirectory() as temporary:
+            write_report(Path(temporary), {"source_file": attack, "frames": []})
+            html = Path(temporary, "report.html").read_text(encoding="utf-8")
+        self.assertNotIn(attack, html)
+        self.assertIn(r"\u003c/script\u003e\u003cscript\u003eglobalThis.pwned=1"
+                      r"\u003c/script\u003e\u0026", html)
+
+
 class TraceTests(unittest.TestCase):
     def test_incomplete_matching_count_rejected(self):
         with self.assertRaisesRegex(ValueError, "complete=1"):
