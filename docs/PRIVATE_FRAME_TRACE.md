@@ -41,3 +41,26 @@ Use a fresh output directory.
 ```powershell
 py -3.11 -B tools/frame_analyzer/veyra_frame_analyzer.py D:/tests/frames.csv --output-dir D:/tests/analysis
 ```
+
+
+## Performance and memory profiling
+
+After capturing a complete representative trace, run the profiler against that
+file directly. The command reads the supplied trace in place and does not
+modify it or create report artifacts:
+
+```powershell
+py -3.11 -B tools/frame_analyzer/benchmark_frame_analyzer.py --trace D:/tests/representative.csv --repeat 5 --measure-memory --input-fps 60 --output-fps 60
+```
+
+The JSON output separates parse, analysis and total wall-clock time for each
+repeat; includes trace metadata, event counts, and source/output row counts;
+and reports Python `tracemalloc` peak allocations in a separate pass. The
+tracemalloc value is not process working-set/RSS and does not include native
+or GPU allocations. Do not compare results across machines without recording
+the Veyra build, Windows version, CPU, GPU and driver, power mode, input/output
+FPS, trace size, and trace dropped-event count. Repeat with the same trace and
+settings when comparing revisions. Use Windows Performance Monitor or another
+process-level profiler separately for process memory and native allocations.
+The trace's GPU stage timestamps are workload observations, not a measurement
+of total GPU utilization.

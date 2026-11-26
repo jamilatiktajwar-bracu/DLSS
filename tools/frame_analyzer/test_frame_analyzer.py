@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Schema and per-frame correlation fixtures. All rows are synthetic."""
 
+import argparse
 import csv
 import io
+import tempfile
 import unittest
+from pathlib import Path
 
-from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_legacy, read_native
+from benchmark_frame_analyzer import (measure_peak_memory, positive_finite_float,
+                                      run_once, write_synthetic_trace)
+from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
+                                  normalize_event, validate_output_paths, write_report)
 
 
 BASE = 70_000_000
@@ -55,7 +61,115 @@ def example_trace(complete=True, dropped=0):
     return result.getvalue()
 
 
+class CsvExportTests(unittest.TestCase):
+    def test_formula_like_text_is_escaped_but_numbers_are_preserved(self):
+        report = {"frames": [{
+            "time_ms": -1.25,
+            "role": "=HYPERLINK(\"https://example.invalid\",\"click\")",
+            "source_a": " \t+SUM(1,1)",
+            "issues": ["@SUM(1,1)", "-not-a-number"],
+            "metrics_ms": {"negative_measurement": -2.5},
+            "discard_reason": "-=1+1",
+        }]}
+        with tempfile.TemporaryDirectory() as temporary:
+            write_report(Path(temporary), report)
+            with Path(temporary, "frames.csv").open(encoding="utf-8-sig", newline="") as file:
+                row = next(csv.DictReader(file))
+        self.assertEqual(row["role"], "'=HYPERLINK(\"https://example.invalid\",\"click\")")
+        self.assertEqual(row["source_a"], "' \t+SUM(1,1)")
+        self.assertEqual(row["issues"], "[\"@SUM(1,1)\",\"-not-a-number\"]")
+        self.assertEqual(row["time_ms"], "-1.25")
+        self.assertEqual(row["metrics_ms"], "{\"negative_measurement\":-2.5}")
+        self.assertEqual(row["discard_reason"], "'-=1+1")
+
+
+    def test_report_json_cannot_close_embedded_script_element(self):
+        attack = "</script><script>globalThis.pwned=1</script>&"
+        with tempfile.TemporaryDirectory() as temporary:
+            write_report(Path(temporary), {"source_file": attack, "frames": []})
+            html = Path(temporary, "report.html").read_text(encoding="utf-8")
+        self.assertNotIn(attack, html)
+        self.assertIn(r"\u003c/script\u003e\u003cscript\u003eglobalThis.pwned=1"
+                      r"\u003c/script\u003e\u0026", html)
+
+
+    def test_existing_analysis_outputs_are_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace = root / "capture.csv"
+            trace.write_text("private trace", encoding="utf-8")
+            destination = root / "capture.analysis"
+            destination.mkdir()
+            prior = destination / "frames.csv"
+            prior.write_text("keep this report", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Refusing to overwrite"):
+                validate_output_paths(trace, destination)
+            self.assertEqual(prior.read_text(encoding="utf-8"), "keep this report")
+
+            clean_destination = root / "clean.analysis"
+            validate_output_paths(trace, clean_destination)
+            self.assertFalse(clean_destination.exists())
+
+    def test_broken_output_symlink_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace = root / "capture.csv"
+            trace.write_text("private trace", encoding="utf-8")
+            destination = root / "capture.analysis"
+            destination.mkdir()
+            broken_link = destination / "report.html"
+            try:
+                broken_link.symlink_to(root / "missing-report.html")
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"Symlinks unavailable: {error}")
+            self.assertFalse(broken_link.exists())
+            self.assertTrue(broken_link.is_symlink())
+            with self.assertRaisesRegex(ValueError, "report.html"):
+                validate_output_paths(trace, destination)
+            self.assertTrue(broken_link.is_symlink())
+
+
+class SyntheticBenchmarkTests(unittest.TestCase):
+    def test_benchmark_fps_arguments_must_be_finite_and_positive(self):
+        for value in ("nan", "inf", "-inf", "0", "-1"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    positive_finite_float(value)
+        self.assertEqual(positive_finite_float("59.94"), 59.94)
+
+    def test_benchmark_fixture_preserves_all_source_and_output_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / "synthetic.csv"
+            write_synthetic_trace(trace, 4)
+            result = run_once(trace, 60, 60, expected_frames=4)
+            trace_mode_result = run_once(trace, 60, 60)
+        self.assertEqual(result["events"], 12)
+        self.assertEqual(result["source_rows"], 4)
+        self.assertEqual(result["output_rows"], 4)
+        self.assertEqual(result["frame_rows"], 8)
+        self.assertEqual(trace_mode_result["events"], 12)
+        self.assertEqual(trace_mode_result["source_rows"], 4)
+        self.assertEqual(trace_mode_result["output_rows"], 4)
+
+    def test_optional_memory_profile_reports_traced_peak_and_complete_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / "synthetic.csv"
+            write_synthetic_trace(trace, 4)
+            result = measure_peak_memory(trace, 60, 60)
+        self.assertEqual(result["events"], 12)
+        self.assertEqual(result["frame_rows"], 8)
+        self.assertGreater(result["peak_traced_bytes"], 0)
+        self.assertEqual(result["scope"], "python_tracemalloc_only")
+
+
 class TraceTests(unittest.TestCase):
+    def test_event_normalization_reuses_the_reader_record(self):
+        raw = {"event": "Source", "host": "70001000", "session": "", "source": "4"}
+        normalized = normalize_event(raw, 1)
+        self.assertIs(normalized, raw)
+        self.assertEqual(normalized, {"event": "Source", "host": 70001000,
+                                      "source": 4, "event_number": 1})
+
     def test_incomplete_matching_count_rejected(self):
         with self.assertRaisesRegex(ValueError, "complete=1"):
             read_native(io.StringIO(example_trace(complete=False)))

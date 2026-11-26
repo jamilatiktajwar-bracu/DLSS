@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Reproducible synthetic Frame Analyzer benchmark; not a real-trace performance claim."""
+
+import argparse
+import csv
+import json
+import math
+import tempfile
+import time
+import tracemalloc
+from pathlib import Path
+
+from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_trace
+
+
+BASE = 70_000_000
+TICKS_PER_FRAME = 166_667
+
+def positive_finite_float(value):
+    """Argparse converter for finite, strictly positive FPS values."""
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number") from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than zero")
+    return parsed
+
+
+def write_synthetic_trace(path, frame_count):
+    event_count = frame_count * 3
+    with path.open("w", encoding="utf-8", newline="") as output:
+        output.write(
+            "# schema=veyra-frame-trace/1\n"
+            "# pid=4242\n"
+            f"# host_ticks_per_second=10000000\n"
+            f"# started_host={BASE}\n"
+            f"# ended_host={BASE + frame_count * TICKS_PER_FRAME}\n"
+            f"# requested_ms={max(1, round(frame_count * TICKS_PER_FRAME / 10000))}\n"
+            f"# termination=duration\n"
+            f"# recorded={event_count}\n"
+            "# dropped=0\n"
+            f"# capacity={event_count}\n"
+        )
+        writer = csv.DictWriter(output, fieldnames=NATIVE_COLUMNS, lineterminator="\n")
+        writer.writeheader()
+        for source in range(1, frame_count + 1):
+            start = BASE + source * TICKS_PER_FRAME
+            arrival = start
+            writer.writerow({
+                "event": "Source", "host": start + 1000, "session": 1, "epoch": 1,
+                "revision": 1, "source": source, "batch": source, "frameKind": "real",
+                "stage": "SyntheticInput", "arrivalHost": arrival, "processHost": arrival + 1000,
+            })
+            writer.writerow({
+                "event": "Submitted", "host": start + 30_000, "session": 1, "epoch": 1,
+                "revision": 1, "source": source, "batch": source, "count": 1, "ms": 1.0,
+            })
+            writer.writerow({
+                "event": "Present", "host": start + 50_000, "session": 1, "epoch": 1,
+                "revision": 1, "source": source, "batch": source, "frameKind": "real",
+                "presentBeginHost": start + 40_000, "presentEndHost": start + 50_000,
+                "readyHost": start + 35_000, "arrivalHost": arrival,
+                "processHost": arrival + 1000,
+            })
+        output.write("# complete=1\n")
+
+
+def run_once(path, input_fps, output_fps, expected_frames=None):
+    started = time.perf_counter()
+    metadata, events = read_trace(path)
+    parsed = time.perf_counter()
+    report = analyze(metadata, events, input_fps=input_fps, output_fps=output_fps,
+                     warmup_seconds=0, tail_seconds=0)
+    finished = time.perf_counter()
+
+    # Fail the smoke test if parsing/analysis silently drops synthetic records.
+    source_rows = sum(row["role"] == "source" for row in report["frames"])
+    output_rows = sum(row["role"] == "output" for row in report["frames"])
+    if expected_frames is not None:
+        expected_events = expected_frames * 3
+        if len(events) != expected_events or metadata["recorded"] != expected_events:
+            raise RuntimeError(f"Expected {expected_events} synthetic events, got {len(events)}")
+        if source_rows != expected_frames or output_rows != expected_frames:
+            raise RuntimeError(
+                f"Expected {expected_frames} source and output rows, got "
+                f"{source_rows} source and {output_rows} output"
+            )
+
+    return {
+        "parse_seconds": round(parsed - started, 6),
+        "analyze_seconds": round(finished - parsed, 6),
+        "total_seconds": round(finished - started, 6),
+        "events": len(events),
+        "source_rows": source_rows,
+        "output_rows": output_rows,
+        "frame_rows": len(report["frames"]),
+    }
+
+
+def measure_peak_memory(path, input_fps, output_fps):
+    """Measure Python-traced peak allocations separately from wall-clock timings."""
+    tracemalloc.start()
+    try:
+        metadata, events = read_trace(path)
+        report = analyze(metadata, events, input_fps=input_fps, output_fps=output_fps,
+                         warmup_seconds=0, tail_seconds=0)
+        current_bytes, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return {
+        "current_traced_bytes": current_bytes,
+        "peak_traced_bytes": peak_bytes,
+        "events": len(events),
+        "frame_rows": len(report["frames"]),
+        "scope": "python_tracemalloc_only",
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trace", type=Path,
+                        help="profile an existing Veyra trace instead of generating synthetic input")
+    parser.add_argument("--frames", type=int, default=10000,
+                        help="synthetic source frames when --trace is not supplied (default: 10000)")
+    parser.add_argument("--repeat", type=int, default=3, help="measured iterations (default: 3)")
+    parser.add_argument("--input-fps", type=positive_finite_float, default=60)
+    parser.add_argument("--output-fps", type=positive_finite_float, default=60)
+    parser.add_argument("--measure-memory", action="store_true",
+                        help="run a separate tracemalloc peak-allocation pass (not process RSS)")
+    args = parser.parse_args()
+    if args.repeat < 1 or (args.trace is None and args.frames < 1):
+        parser.error("repeat and synthetic frame counts must be positive")
+    if args.trace is not None:
+        trace = args.trace.expanduser()
+        if not trace.is_file():
+            parser.error(f"trace file does not exist or is not a regular file: {trace}")
+        results = [run_once(trace, args.input_fps, args.output_fps) for _ in range(args.repeat)]
+        memory = (measure_peak_memory(trace, args.input_fps, args.output_fps)
+                  if args.measure_memory else None)
+        metadata, events = read_trace(trace)
+        report_mode = "real_trace"
+        frame_count = None
+    else:
+        with tempfile.TemporaryDirectory(prefix="veyra-frame-bench-") as temporary:
+            trace = Path(temporary) / "synthetic-trace.csv"
+            write_synthetic_trace(trace, args.frames)
+            results = [run_once(trace, args.input_fps, args.output_fps, args.frames)
+                       for _ in range(args.repeat)]
+            memory = (measure_peak_memory(trace, args.input_fps, args.output_fps)
+                      if args.measure_memory else None)
+            metadata, events = read_trace(trace)
+        report_mode = "synthetic"
+        frame_count = args.frames
+    from collections import Counter
+    print(json.dumps({
+        "benchmark": "veyra-frame-analyzer-profile-v1",
+        "input_mode": report_mode,
+        "trace_name": args.trace.name if args.trace is not None else None,
+        "trace_bytes": args.trace.stat().st_size if args.trace is not None else None,
+        "synthetic_only": args.trace is None,
+        "frames_requested": frame_count,
+        "repeat": args.repeat,
+        "input_fps": args.input_fps,
+        "output_fps": args.output_fps,
+        "metadata": metadata,
+        "event_counts": dict(sorted(Counter(event["event"] for event in events).items())),
+        "results": results,
+        "memory": memory,
+    }, indent=2))
+
+
+if __name__ == "__main__":
+    main()

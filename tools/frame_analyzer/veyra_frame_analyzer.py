@@ -61,7 +61,13 @@ def number(value, label, numeric_type=int):
 
 
 def normalize_event(row, index):
-    event = {key: value for key, value in row.items() if value not in (None, "")}
+    # The CSV readers create a fresh dict for each record. Normalize it in
+    # place instead of allocating a second dict per event; large captures can
+    # contain millions of these short-lived intermediate objects.
+    for key in tuple(row):
+        if row[key] in (None, ""):
+            del row[key]
+    event = row
     if not event.get("event") or "host" not in event:
         raise ValueError(f"Event {index} is missing its kind or host timestamp")
     for key in event.keys() & NUMERIC_FIELDS:
@@ -269,6 +275,7 @@ def output_records(outputs, host_origin, scale, legacy):
         items.sort(key=lambda item: item["host"])
         ready_observations = [event["host"] for event in items if event["event"] == "FrameReady"]
         terminal = [event for event in items if event["event"] in {"Present", "Discarded"}]
+        terminal_ids = {id(event) for event in terminal}
         anchor = terminal or [event for event in items if event["event"] == "FrameReady"][:1] or items[:1]
         for event in anchor:
             present = event["event"] == "Present"
@@ -296,7 +303,7 @@ def output_records(outputs, host_origin, scale, legacy):
             row["stages"] = [sample for item in items if item["event"] == "Cpu"
                              if (sample := stage_sample(item)) is not None]
             row["events"] = [event["event_number"]] + [other["event_number"] for other in items
-                                                      if other not in terminal and other is not event]
+                                                      if id(other) not in terminal_ids and other is not event]
             if len(terminal) > 1:
                 row["issues"].append("repeated_output_identity")
             if not present and not discarded:
@@ -906,13 +913,27 @@ function drawChart() {
         context.fill()
         plotted.push(point)
     }
+    // Frame rows can be grouped by role/scope rather than chart time. Keep
+    // the hover index sorted by its actual x-coordinate before binary search.
+    plotted.sort((a, b) => a.x - b.x)
     sweep = [left, left + plotW, top, top + plotH]
 }
 function pointAt(event) {
     if (!sweep || event.offsetX < sweep[0] - 8 || event.offsetX > sweep[1] + 8
         || event.offsetY < sweep[2] - 8 || event.offsetY > sweep[3] + 8) return null
+    // The plotted-point index is sorted by x. Restrict distance checks to
+    // the 40 px horizontal window around the pointer.
+    const leftEdge = event.offsetX - 20
+    const rightEdge = event.offsetX + 20
+    let low = 0, high = plotted.length
+    while (low < high) {
+        const middle = (low + high) >>> 1
+        if (plotted[middle].x < leftEdge) low = middle + 1
+        else high = middle
+    }
     let distance = Infinity, nearest = null
-    for (const point of plotted) {
+    for (let index = low; index < plotted.length && plotted[index].x <= rightEdge; index++) {
+        const point = plotted[index]
         const delta = Math.hypot(point.x - event.offsetX, point.y - event.offsetY)
         if (delta < distance) { distance = delta; nearest = point }
     }
@@ -1000,6 +1021,15 @@ filterAndDraw()
 """
 
 
+def spreadsheet_safe_cell(value):
+    """Prefix formula-like text so spreadsheet applications treat it as data."""
+    if not isinstance(value, str):
+        return value
+    if value.lstrip(" \t\r\n\v\f").startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def write_report(directory, report):
     directory.mkdir(parents=True, exist_ok=True)
     compact = json.dumps(report, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
@@ -1013,12 +1043,23 @@ def write_report(directory, report):
         writer = csv.DictWriter(file, fields)
         writer.writeheader()
         for row in report["frames"]:
-            writer.writerow({field: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-                             if isinstance(value, (dict, list)) else value
+            writer.writerow({field: spreadsheet_safe_cell(
+                                 json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                                 if isinstance(value, (dict, list)) else value)
                              for field in fields if (value := row.get(field)) is not None})
     escaped = compact.replace("&", r"\u0026").replace("<", r"\u003c").replace(">", r"\u003e")
     directory.joinpath("report.html").write_text(REPORT_TEMPLATE.replace("__VEYRA_REPORT_JSON__", escaped, 1),
                                                  encoding="utf-8")
+
+
+def validate_output_paths(trace, destination):
+    output_paths = [destination.joinpath(name) for name in ("summary.json", "report.html", "frames.csv")]
+    if trace.resolve() in {path.resolve() for path in output_paths}:
+        raise ValueError("An output file would overwrite the input trace")
+    existing = [path for path in output_paths if path.exists() or path.is_symlink()]
+    if existing:
+        names = ", ".join(path.name for path in existing)
+        raise ValueError(f"Refusing to overwrite existing analysis output(s): {names}")
 
 
 def bounded_float(text, *, minimum):
@@ -1046,10 +1087,8 @@ def main():
         metadata, events = read_trace(args.trace)
         report = analyze(metadata, events, args.input_fps, args.output_fps, args.warmup, args.trim_end)
         report["source_file"] = args.trace.name
-        # Refuse an explicit output directory that would overwrite the input.
-        if args.trace.resolve() in {destination.joinpath(name).resolve()
-                                    for name in ("summary.json", "report.html", "frames.csv")}:
-            raise ValueError("An output file would overwrite the input trace")
+        # Preserve prior analysis artifacts unless the user chooses a clean destination.
+        validate_output_paths(args.trace, destination)
         write_report(destination, report)
     except (ValueError, OSError, csv.Error) as error:
         print(f"Cannot analyze frame trace: {error}", file=sys.stderr)
