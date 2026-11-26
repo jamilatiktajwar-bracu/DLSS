@@ -1000,6 +1000,15 @@ filterAndDraw()
 """
 
 
+def spreadsheet_safe_cell(value):
+    """Prefix formula-like text so spreadsheet applications treat it as data."""
+    if not isinstance(value, str):
+        return value
+    if value.lstrip(" \\t\\r\\n\\v\\f").startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def write_report(directory, report):
     directory.mkdir(parents=True, exist_ok=True)
     compact = json.dumps(report, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
@@ -1013,8 +1022,9 @@ def write_report(directory, report):
         writer = csv.DictWriter(file, fields)
         writer.writeheader()
         for row in report["frames"]:
-            writer.writerow({field: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-                             if isinstance(value, (dict, list)) else value
+            writer.writerow({field: spreadsheet_safe_cell(
+                                 json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                                 if isinstance(value, (dict, list)) else value)
                              for field in fields if (value := row.get(field)) is not None})
     escaped = compact.replace("&", r"\u0026").replace("<", r"\u003c").replace(">", r"\u003e")
     directory.joinpath("report.html").write_text(REPORT_TEMPLATE.replace("__VEYRA_REPORT_JSON__", escaped, 1),

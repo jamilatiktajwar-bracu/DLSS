@@ -5,7 +5,7 @@ import csv
 import io
 import unittest
 
-from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_legacy, read_native
+from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_legacy, read_native, write_report
 
 
 BASE = 70_000_000
@@ -53,6 +53,26 @@ def example_trace(complete=True, dropped=0):
     if complete:
         result.write("# complete=1\n")
     return result.getvalue()
+
+
+class CsvExportTests(unittest.TestCase):
+    def test_formula_like_text_is_escaped_but_numbers_are_preserved(self):
+        report = {"frames": [{
+            "time_ms": -1.25,
+            "role": "=HYPERLINK(\"https://example.invalid\",\"click\")",
+            "source_a": " \\t+SUM(1,1)",
+            "issues": ["@SUM(1,1)", "-not-a-number"],
+            "metrics_ms": {"negative_measurement": -2.5},
+        }]}
+        with tempfile.TemporaryDirectory() as temporary:
+            write_report(Path(temporary), report)
+            with Path(temporary, "frames.csv").open(encoding="utf-8-sig", newline="") as file:
+                row = next(csv.DictReader(file))
+        self.assertEqual(row["role"], "'=HYPERLINK(\"https://example.invalid\",\"click\")")
+        self.assertEqual(row["source_a"], "' \\t+SUM(1,1)")
+        self.assertEqual(row["issues"], "[\"'@SUM(1,1)\",\"'-not-a-number\"]")
+        self.assertEqual(row["time_ms"], "-1.25")
+        self.assertEqual(row["metrics_ms"], "{\"negative_measurement\":-2.5}")
 
 
 class TraceTests(unittest.TestCase):
