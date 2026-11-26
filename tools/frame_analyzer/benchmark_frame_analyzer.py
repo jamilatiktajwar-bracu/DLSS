@@ -5,6 +5,7 @@
 import argparse
 import csv
 import json
+import math
 import tempfile
 import time
 import tracemalloc
@@ -15,6 +16,16 @@ from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_trace
 
 BASE = 70_000_000
 TICKS_PER_FRAME = 166_667
+
+def positive_finite_float(value):
+    """Argparse converter for finite, strictly positive FPS values."""
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number") from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than zero")
+    return parsed
 
 
 def write_synthetic_trace(path, frame_count):
@@ -110,13 +121,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frames", type=int, default=10000, help="synthetic source frames (default: 10000)")
     parser.add_argument("--repeat", type=int, default=3, help="measured iterations (default: 3)")
-    parser.add_argument("--input-fps", type=float, default=60)
-    parser.add_argument("--output-fps", type=float, default=60)
+    parser.add_argument("--input-fps", type=positive_finite_float, default=60)
+    parser.add_argument("--output-fps", type=positive_finite_float, default=60)
     parser.add_argument("--measure-memory", action="store_true",
                         help="run a separate tracemalloc peak-allocation pass (not process RSS)")
     args = parser.parse_args()
-    if args.frames < 1 or args.repeat < 1 or args.input_fps <= 0 or args.output_fps <= 0:
-        parser.error("frames, repeat, and FPS values must be positive")
+    if args.frames < 1 or args.repeat < 1:
+        parser.error("frames and repeat values must be positive")
     with tempfile.TemporaryDirectory(prefix="veyra-frame-bench-") as temporary:
         trace = Path(temporary) / "synthetic-trace.csv"
         write_synthetic_trace(trace, args.frames)
