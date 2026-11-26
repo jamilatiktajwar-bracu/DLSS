@@ -921,8 +921,8 @@ function drawChart() {
 function pointAt(event) {
     if (!sweep || event.offsetX < sweep[0] - 8 || event.offsetX > sweep[1] + 8
         || event.offsetY < sweep[2] - 8 || event.offsetY > sweep[3] + 8) return null
-    // plotted follows model.frames host order, so x is monotonic. Restrict
-    // distance checks to the 40 px horizontal window around the pointer.
+    // The plotted-point index is sorted by x. Restrict distance checks to
+    // the 40 px horizontal window around the pointer.
     const leftEdge = event.offsetX - 20
     const rightEdge = event.offsetX + 20
     let low = 0, high = plotted.length
