@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from benchmark_frame_analyzer import run_once, write_synthetic_trace
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
                                   validate_output_paths, write_report)
 
@@ -124,6 +125,18 @@ class CsvExportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "report.html"):
                 validate_output_paths(trace, destination)
             self.assertTrue(broken_link.is_symlink())
+
+
+class SyntheticBenchmarkTests(unittest.TestCase):
+    def test_benchmark_fixture_preserves_all_source_and_output_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / "synthetic.csv"
+            write_synthetic_trace(trace, 4)
+            result = run_once(trace, 60, 60, expected_frames=4)
+        self.assertEqual(result["events"], 12)
+        self.assertEqual(result["source_rows"], 4)
+        self.assertEqual(result["output_rows"], 4)
+        self.assertEqual(result["frame_rows"], 8)
 
 
 class TraceTests(unittest.TestCase):
