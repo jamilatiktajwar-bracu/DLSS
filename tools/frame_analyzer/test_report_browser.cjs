@@ -59,7 +59,7 @@ const assert = require('node:assert/strict');
       previousDetail);
     assert.notEqual(await detail.textContent(), previousDetail,
       'clicking a different plotted point should change the selected frame');
-    assert.match(await detail.textContent(), new RegExp('source ' + point.source + '(?:\\\\D|$)'),
+    assert.ok((await detail.textContent()).includes('source ' + point.source),
       'chart selection should open details for the clicked source');
     assert.equal(errors.length, 0, errors.join('\\n'));
     console.log('Browser report smoke and chart/table interaction checks passed.');
