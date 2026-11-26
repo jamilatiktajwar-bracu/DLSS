@@ -3,7 +3,9 @@
 
 import csv
 import io
+import tempfile
 import unittest
+from pathlib import Path
 
 from veyra_frame_analyzer import NATIVE_COLUMNS, analyze, read_legacy, read_native, write_report
 
