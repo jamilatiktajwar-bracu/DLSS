@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 
     // Select a metric populated by the synthetic fixture so the canvas has
     // multiple points to hit regardless of the report's default metric.
-    await page.locator('#metric').selectOption('present_api');
+    await page.locator('#metric').selectOption('present_prepare_wall');
     const canvas = page.locator('#chart');
     const bounds = await canvas.boundingBox();
     assert.ok(bounds, 'chart canvas should be visible');
