@@ -67,7 +67,7 @@ def write_synthetic_trace(path, frame_count):
         output.write("# complete=1\n")
 
 
-def run_once(path, input_fps, output_fps, expected_frames):
+def run_once(path, input_fps, output_fps, expected_frames=None):
     started = time.perf_counter()
     metadata, events = read_trace(path)
     parsed = time.perf_counter()
@@ -78,14 +78,15 @@ def run_once(path, input_fps, output_fps, expected_frames):
     # Fail the smoke test if parsing/analysis silently drops synthetic records.
     source_rows = sum(row["role"] == "source" for row in report["frames"])
     output_rows = sum(row["role"] == "output" for row in report["frames"])
-    expected_events = expected_frames * 3
-    if len(events) != expected_events or metadata["recorded"] != expected_events:
-        raise RuntimeError(f"Expected {expected_events} synthetic events, got {len(events)}")
-    if source_rows != expected_frames or output_rows != expected_frames:
-        raise RuntimeError(
-            f"Expected {expected_frames} source and output rows, got "
-            f"{source_rows} source and {output_rows} output"
-        )
+    if expected_frames is not None:
+        expected_events = expected_frames * 3
+        if len(events) != expected_events or metadata["recorded"] != expected_events:
+            raise RuntimeError(f"Expected {expected_events} synthetic events, got {len(events)}")
+        if source_rows != expected_frames or output_rows != expected_frames:
+            raise RuntimeError(
+                f"Expected {expected_frames} source and output rows, got "
+                f"{source_rows} source and {output_rows} output"
+            )
 
     return {
         "parse_seconds": round(parsed - started, 6),
@@ -119,28 +120,52 @@ def measure_peak_memory(path, input_fps, output_fps):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--frames", type=int, default=10000, help="synthetic source frames (default: 10000)")
+    parser.add_argument("--trace", type=Path,
+                        help="profile an existing Veyra trace instead of generating synthetic input")
+    parser.add_argument("--frames", type=int, default=10000,
+                        help="synthetic source frames when --trace is not supplied (default: 10000)")
     parser.add_argument("--repeat", type=int, default=3, help="measured iterations (default: 3)")
     parser.add_argument("--input-fps", type=positive_finite_float, default=60)
     parser.add_argument("--output-fps", type=positive_finite_float, default=60)
     parser.add_argument("--measure-memory", action="store_true",
                         help="run a separate tracemalloc peak-allocation pass (not process RSS)")
     args = parser.parse_args()
-    if args.frames < 1 or args.repeat < 1:
-        parser.error("frames and repeat values must be positive")
-    with tempfile.TemporaryDirectory(prefix="veyra-frame-bench-") as temporary:
-        trace = Path(temporary) / "synthetic-trace.csv"
-        write_synthetic_trace(trace, args.frames)
-        results = [run_once(trace, args.input_fps, args.output_fps, args.frames) for _ in range(args.repeat)]
+    if args.repeat < 1 or (args.trace is None and args.frames < 1):
+        parser.error("repeat and synthetic frame counts must be positive")
+    if args.trace is not None:
+        trace = args.trace.expanduser()
+        if not trace.is_file():
+            parser.error(f"trace file does not exist or is not a regular file: {trace}")
+        results = [run_once(trace, args.input_fps, args.output_fps) for _ in range(args.repeat)]
         memory = (measure_peak_memory(trace, args.input_fps, args.output_fps)
                   if args.measure_memory else None)
+        metadata, events = read_trace(trace)
+        report_mode = "real_trace"
+        frame_count = None
+    else:
+        with tempfile.TemporaryDirectory(prefix="veyra-frame-bench-") as temporary:
+            trace = Path(temporary) / "synthetic-trace.csv"
+            write_synthetic_trace(trace, args.frames)
+            results = [run_once(trace, args.input_fps, args.output_fps, args.frames)
+                       for _ in range(args.repeat)]
+            memory = (measure_peak_memory(trace, args.input_fps, args.output_fps)
+                      if args.measure_memory else None)
+            metadata, events = read_trace(trace)
+        report_mode = "synthetic"
+        frame_count = args.frames
+    from collections import Counter
     print(json.dumps({
-        "benchmark": "synthetic-frame-analyzer-v1",
-        "synthetic_only": True,
-        "frames_requested": args.frames,
+        "benchmark": "veyra-frame-analyzer-profile-v1",
+        "input_mode": report_mode,
+        "trace_name": args.trace.name if args.trace is not None else None,
+        "trace_bytes": args.trace.stat().st_size if args.trace is not None else None,
+        "synthetic_only": args.trace is None,
+        "frames_requested": frame_count,
         "repeat": args.repeat,
         "input_fps": args.input_fps,
         "output_fps": args.output_fps,
+        "metadata": metadata,
+        "event_counts": dict(sorted(Counter(event["event"] for event in events).items())),
         "results": results,
         "memory": memory,
     }, indent=2))
