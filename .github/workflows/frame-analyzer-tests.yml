@@ -82,5 +82,5 @@ jobs:
           echo "REPORT_HTML=${{ runner.temp }}/frame-analyzer-browser/report.html" >> "$GITHUB_ENV"
       - name: Exercise report in headless Chromium
         run: node tools/frame_analyzer/test_report_browser.cjs
-      - name: Run synthetic benchmark smoke test
-        run: python tools/frame_analyzer/benchmark_frame_analyzer.py --frames 1000 --repeat 1
+      - name: Run synthetic benchmark and memory smoke test
+        run: python tools/frame_analyzer/benchmark_frame_analyzer.py --frames 1000 --repeat 1 --measure-memory
