@@ -55,18 +55,33 @@ def write_synthetic_trace(path, frame_count):
         output.write("# complete=1\n")
 
 
-def run_once(path, input_fps, output_fps):
+def run_once(path, input_fps, output_fps, expected_frames):
     started = time.perf_counter()
     metadata, events = read_trace(path)
     parsed = time.perf_counter()
     report = analyze(metadata, events, input_fps=input_fps, output_fps=output_fps,
                      warmup_seconds=0, tail_seconds=0)
     finished = time.perf_counter()
+
+    # Fail the smoke test if parsing/analysis silently drops synthetic records.
+    source_rows = sum(row["role"] == "source" for row in report["frames"])
+    output_rows = sum(row["role"] == "output" for row in report["frames"])
+    expected_events = expected_frames * 3
+    if len(events) != expected_events or metadata["recorded"] != expected_events:
+        raise RuntimeError(f"Expected {expected_events} synthetic events, got {len(events)}")
+    if source_rows != expected_frames or output_rows != expected_frames:
+        raise RuntimeError(
+            f"Expected {expected_frames} source and output rows, got "
+            f"{source_rows} source and {output_rows} output"
+        )
+
     return {
         "parse_seconds": round(parsed - started, 6),
         "analyze_seconds": round(finished - parsed, 6),
         "total_seconds": round(finished - started, 6),
         "events": len(events),
+        "source_rows": source_rows,
+        "output_rows": output_rows,
         "frame_rows": len(report["frames"]),
     }
 
@@ -83,7 +98,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="veyra-frame-bench-") as temporary:
         trace = Path(temporary) / "synthetic-trace.csv"
         write_synthetic_trace(trace, args.frames)
-        results = [run_once(trace, args.input_fps, args.output_fps) for _ in range(args.repeat)]
+        results = [run_once(trace, args.input_fps, args.output_fps, args.frames) for _ in range(args.repeat)]
     print(json.dumps({
         "benchmark": "synthetic-frame-analyzer-v1",
         "synthetic_only": True,
