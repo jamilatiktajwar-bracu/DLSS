@@ -65,6 +65,7 @@ class CsvExportTests(unittest.TestCase):
             "source_a": " \t+SUM(1,1)",
             "issues": ["@SUM(1,1)", "-not-a-number"],
             "metrics_ms": {"negative_measurement": -2.5},
+            "discard_reason": "-=1+1",
         }]}
         with tempfile.TemporaryDirectory() as temporary:
             write_report(Path(temporary), report)
@@ -72,9 +73,10 @@ class CsvExportTests(unittest.TestCase):
                 row = next(csv.DictReader(file))
         self.assertEqual(row["role"], "'=HYPERLINK(\"https://example.invalid\",\"click\")")
         self.assertEqual(row["source_a"], "' \t+SUM(1,1)")
-        self.assertEqual(row["issues"], "[\"'@SUM(1,1)\",\"'-not-a-number\"]")
+        self.assertEqual(row["issues"], "[\"@SUM(1,1)\",\"-not-a-number\"]")
         self.assertEqual(row["time_ms"], "-1.25")
         self.assertEqual(row["metrics_ms"], "{\"negative_measurement\":-2.5}")
+        self.assertEqual(row["discard_reason"], "' -=1+1".replace("' ", "'"))
 
 
 class TraceTests(unittest.TestCase):

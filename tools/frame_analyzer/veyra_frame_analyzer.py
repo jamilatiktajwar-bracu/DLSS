@@ -911,8 +911,19 @@ function drawChart() {
 function pointAt(event) {
     if (!sweep || event.offsetX < sweep[0] - 8 || event.offsetX > sweep[1] + 8
         || event.offsetY < sweep[2] - 8 || event.offsetY > sweep[3] + 8) return null
+    // plotted follows model.frames host order, so x is monotonic. Restrict
+    // distance checks to the 40 px horizontal window around the pointer.
+    const leftEdge = event.offsetX - 20
+    const rightEdge = event.offsetX + 20
+    let low = 0, high = plotted.length
+    while (low < high) {
+        const middle = (low + high) >>> 1
+        if (plotted[middle].x < leftEdge) low = middle + 1
+        else high = middle
+    }
     let distance = Infinity, nearest = null
-    for (const point of plotted) {
+    for (let index = low; index < plotted.length && plotted[index].x <= rightEdge; index++) {
+        const point = plotted[index]
         const delta = Math.hypot(point.x - event.offsetX, point.y - event.offsetY)
         if (delta < distance) { distance = delta; nearest = point }
     }
