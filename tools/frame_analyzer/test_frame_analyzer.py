@@ -213,14 +213,14 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(discarded["anomalies"][0]["reasons"], ["output_deadline_expired"])
 
     def test_legacy_duplicate_fields_rejected(self):
-        raw = ("Frame trace: records=1 capacity=10 overwritten=0\\n"
-               "event=Source host=5000000 session=1 source=2 source=3\\n")
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
+               "event=Source host=5000000 session=1 source=2 source=3\n")
         with self.assertRaisesRegex(ValueError, "Malformed legacy event record"):
             read_legacy(io.StringIO(raw))
 
     def test_legacy_malformed_token_rejected(self):
-        raw = ("Frame trace: records=1 capacity=10 overwritten=0\\n"
-               "event=Source host=5000000 session=1 malformed\\n")
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
+               "event=Source host=5000000 session=1 malformed\n")
         with self.assertRaisesRegex(ValueError, "Malformed legacy event record"):
             read_legacy(io.StringIO(raw))
 
