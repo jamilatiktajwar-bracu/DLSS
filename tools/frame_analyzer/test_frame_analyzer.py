@@ -200,6 +200,20 @@ class TraceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "after the trace completion"):
             read_native(io.StringIO("".join(lines)))
 
+    def test_native_event_host_must_fall_inside_capture_window(self):
+        lines = example_trace().splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        rows = list(csv.DictReader(lines[header_index:]))
+        rows[0]["host"] = str(BASE - 1)
+        output = io.StringIO()
+        output.write("".join(lines[:header_index]))
+        writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        output.write("# complete=1\\n")
+        with self.assertRaisesRegex(ValueError, "outside the trace capture window"):
+            read_native(io.StringIO(output.getvalue()))
+
     def test_incomplete_matching_count_rejected(self):
         with self.assertRaisesRegex(ValueError, "complete=1"):
             read_native(io.StringIO(example_trace(complete=False)))
