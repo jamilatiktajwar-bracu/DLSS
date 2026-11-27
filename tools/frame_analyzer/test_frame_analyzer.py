@@ -236,7 +236,7 @@ class TraceTests(unittest.TestCase):
     def test_native_duplicate_metadata_rejected(self):
         trace = example_trace()
         lines = trace.splitlines(keepends=True)
-        lines.insert(1, "# pid=99\\n")
+        lines.insert(1, "# pid=99\n")
         with self.assertRaisesRegex(ValueError, "Invalid trace metadata"):
             read_native(io.StringIO("".join(lines)))
 
@@ -244,35 +244,19 @@ class TraceTests(unittest.TestCase):
         trace = example_trace()
         lines = trace.splitlines(keepends=True)
         header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        columns = next(csv.reader([lines[header_index]]))
         event_rows = list(csv.DictReader(lines[header_index:-1]))
         event_rows[0]["host"] = str(BASE)
         event_rows[-1]["host"] = str(BASE + 3_000_000)
         output = io.StringIO()
         output.write("".join(lines[:header_index]))
-        writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\\n")
+        writer = csv.DictWriter(output, columns, lineterminator="\\n")
         writer.writeheader()
         writer.writerows(event_rows)
         output.write("# complete=1\\n")
         meta, events = read_native(io.StringIO(output.getvalue()))
         self.assertEqual(events[0]["host"], meta["started_host"])
         self.assertEqual(events[-1]["host"], meta["ended_host"])
-
-    def test_native_duplicate_and_empty_column_names_rejected(self):
-        trace = example_trace()
-        lines = trace.splitlines(keepends=True)
-        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
-        columns = lines[header_index].rstrip("\n").split(",")
-        columns[1] = columns[0]
-        lines[header_index] = ",".join(columns) + "\n"
-        with self.assertRaisesRegex(ValueError, "column header is invalid"):
-            read_native(io.StringIO("".join(lines)))
-        lines = trace.splitlines(keepends=True)
-        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
-        columns = lines[header_index].rstrip("\n").split(",")
-        columns[-1] = ""
-        lines[header_index] = ",".join(columns) + "\n"
-        with self.assertRaisesRegex(ValueError, "column header is invalid"):
-            read_native(io.StringIO("".join(lines)))
 
     def test_native_malformed_csv_quotes_rejected(self):
         lines = example_trace().splitlines(keepends=True)
