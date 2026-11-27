@@ -299,6 +299,10 @@ def output_records(outputs, host_origin, scale, legacy):
         ready_observations = [event["host"] for event in items if event["event"] == "FrameReady"]
         terminal = [event for event in items if event["event"] in {"Present", "Discarded"}]
         terminal_ids = {id(item) for item in terminal}
+        non_terminal_event_numbers = [item["event_number"] for item in items
+                                      if id(item) not in terminal_ids]
+        cpu_stage_samples = [sample for item in items if item["event"] == "Cpu"
+                             if (sample := stage_sample(item)) is not None]
         anchor = terminal or [event for event in items if event["event"] == "FrameReady"][:1] or items[:1]
         for event in anchor:
             present = event["event"] == "Present"
@@ -323,10 +327,9 @@ def output_records(outputs, host_origin, scale, legacy):
                 decoded_host=event.get("decodedHost") or None, process_host=event.get("processHost") or None,
             )
             row["frame_kind"] = output_kind(event, legacy)
-            row["stages"] = [sample for item in items if item["event"] == "Cpu"
-                             if (sample := stage_sample(item)) is not None]
-            row["events"] = [event["event_number"]] + [other["event_number"] for other in items
-                                                      if id(other) not in terminal_ids and other is not event]
+            row["stages"] = cpu_stage_samples
+            row["events"] = [event["event_number"]] + [number for number in non_terminal_event_numbers
+                                                       if number != event["event_number"]]
             if len(terminal) > 1:
                 row["issues"].append("repeated_output_identity")
             if not present and not discarded:
