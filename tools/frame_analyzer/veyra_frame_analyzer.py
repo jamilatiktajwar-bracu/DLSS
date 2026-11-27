@@ -153,6 +153,8 @@ def read_legacy(lines):
     if not header:
         raise ValueError("Expected a Veyra diagnostics snapshot or private Veyra CSV trace")
     recorded, capacity, overwritten = map(int, header.groups())
+    if recorded < 0 or capacity <= 0 or overwritten < 0 or recorded > capacity:
+        raise ValueError("Invalid legacy trace record counters")
     if recorded != len(events):
         raise ValueError(f"Incomplete diagnostic snapshot: declared {recorded} events, read {len(events)}")
     metadata = {"schema": "legacy-diagnostic-report", "host_ticks_per_second": 10_000_000,
