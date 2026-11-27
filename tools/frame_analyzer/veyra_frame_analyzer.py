@@ -128,7 +128,10 @@ def read_native(lines):
         if len(row) != len(columns):
             raise ValueError(f"Invalid column count at CSV line {reader.line_num}")
         index += 1
-        events.append(normalize_event(dict(zip(columns, row)), index))
+        event = normalize_event(dict(zip(columns, row)), index)
+        if not metadata["started_host"] <= event["host"] <= metadata["ended_host"]:
+            raise ValueError(f"Event {index} host timestamp is outside the trace capture window")
+        events.append(event)
     if len(events) != metadata["recorded"]:
         raise ValueError(f"Incomplete trace: declared {metadata['recorded']} events, read {len(events)}")
     if not completed:
