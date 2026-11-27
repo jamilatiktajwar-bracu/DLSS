@@ -575,8 +575,8 @@ def annotate_gap_evidence(rows, source_by_key, scale):
     for row in rows:
         if not row["anomalies"]:
             continue
-        source = source_by_key[row["source_key"]]
-        context = {"source_measurements_ms": dict(source["metrics_ms"]),
+        source = source_by_key.get(row["source_key"])
+        context = {"source_measurements_ms": dict(source["metrics_ms"]) if source else {},
                    "nearby_present_wall_ms": None, "intersection_with_source_graph_wall_ms": None}
         latency = row["metrics_ms"].get("present_entry_interval")
         if latency is not None and row.get("present_begin_host"):
@@ -587,7 +587,7 @@ def annotate_gap_evidence(rows, source_by_key, scale):
                 gap_intersection = measured_delta(prior["present_begin_host"],
                     min(prior.get("present_end_host") or now, now), scale)
                 context["nearby_present_wall_ms"] = gap_intersection
-                if row.get("process_host") and source["metrics_ms"].get("graph_submit") is not None:
+                if source and row.get("process_host") and source["metrics_ms"].get("graph_submit") is not None:
                     process = row["process_host"]
                     graph_end = process + round(source["metrics_ms"]["graph_submit"] / scale)
                     context["intersection_with_source_graph_wall_ms"] = max(
