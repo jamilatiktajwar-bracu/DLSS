@@ -327,7 +327,7 @@ def output_records(outputs, host_origin, scale, legacy):
                 decoded_host=event.get("decodedHost") or None, process_host=event.get("processHost") or None,
             )
             row["frame_kind"] = output_kind(event, legacy)
-            row["stages"] = cpu_stage_samples
+            row["stages"] = list(cpu_stage_samples)
             row["events"] = [event["event_number"]] + [number for number in non_terminal_event_numbers
                                                        if number != event["event_number"]]
             if len(terminal) > 1:
