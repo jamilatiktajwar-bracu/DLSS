@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 SCHEMA = "veyra-frame-trace/1"
-LEGACY_HEADER = re.compile(r"Frame trace: records=(\d+) capacity=(\d+) overwritten=(\d+)")
+LEGACY_HEADER = re.compile(r"Frame trace: records=(-?\d+) capacity=(-?\d+) overwritten=(-?\d+)")
 NATIVE_COLUMNS = (
     "event host session revision epoch source batch fence pts detail count ms decodedHost "
     "processHost readyHost presentBeginHost presentEndHost entryDeviationMs returnDeviationMs "
