@@ -300,6 +300,7 @@ def output_records(outputs, host_origin, scale, legacy):
         terminal = [event for event in items if event["event"] in {"Present", "Discarded"}]
         anchor = terminal or [event for event in items if event["event"] == "FrameReady"][:1] or items[:1]
         for event in anchor:
+            terminal_ids = {id(item) for item in terminal}
             present = event["event"] == "Present"
             discarded = event["event"] == "Discarded"
             is_ready = event["event"] == "FrameReady"
