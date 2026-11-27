@@ -208,10 +208,10 @@ class TraceTests(unittest.TestCase):
         event_rows[0]["host"] = str(BASE - 1)
         output = io.StringIO()
         output.write("".join(lines[:header_index]))
-        writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\\n")
+        writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\n")
         writer.writeheader()
         writer.writerows(event_rows)
-        output.write("# complete=1\\n")
+        output.write("# complete=1\n")
         with self.assertRaisesRegex(ValueError, "outside the trace capture window"):
             read_native(io.StringIO(output.getvalue()))
 
