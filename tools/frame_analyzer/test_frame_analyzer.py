@@ -170,6 +170,36 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(normalized, {"event": "Source", "host": 70001000,
                                       "source": 4, "event_number": 1})
 
+    def test_native_duplicate_and_empty_column_names_rejected(self):
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        columns = lines[header_index].rstrip("\n").split(",")
+        columns[1] = columns[0]
+        lines[header_index] = ",".join(columns) + "\n"
+        with self.assertRaisesRegex(ValueError, "column header is invalid"):
+            read_native(io.StringIO("".join(lines)))
+        lines = trace.splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        columns = lines[header_index].rstrip("\n").split(",")
+        columns[-1] = ""
+        lines[header_index] = ",".join(columns) + "\n"
+        with self.assertRaisesRegex(ValueError, "column header is invalid"):
+            read_native(io.StringIO("".join(lines)))
+
+    def test_native_malformed_csv_quotes_rejected(self):
+        lines = example_trace().splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        lines[header_index + 1] = '"unterminated,broken\n'
+        with self.assertRaises(csv.Error):
+            read_native(io.StringIO("".join(lines)))
+
+    def test_native_completion_marker_must_be_terminal(self):
+        lines = example_trace().splitlines(keepends=True)
+        lines.append("unexpected,extra,row\n")
+        with self.assertRaisesRegex(ValueError, "after the trace completion"):
+            read_native(io.StringIO("".join(lines)))
+
     def test_incomplete_matching_count_rejected(self):
         with self.assertRaisesRegex(ValueError, "complete=1"):
             read_native(io.StringIO(example_trace(complete=False)))
