@@ -142,9 +142,11 @@ def read_legacy(lines):
             if header:
                 raise ValueError("Provide a single diagnostic snapshot")
             header = match
-        elif line.startswith("event="):
+        elif line.strip().startswith("event="):
+            # Accept harmless surrounding whitespace, but do not let a
+            # whitespace-prefixed event record disappear from the snapshot.
             fields = {}
-            for token in line.split():
+            for token in line.strip().split():
                 key, separator, value = token.partition("=")
                 if not separator or not key or key in fields:
                     raise ValueError(f"Malformed legacy event record at event {len(events) + 1}")
