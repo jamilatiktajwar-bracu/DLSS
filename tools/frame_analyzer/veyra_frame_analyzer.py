@@ -107,9 +107,13 @@ def read_native(lines):
     if metadata.get("termination") not in ("duration", "shutdown"):
         raise ValueError("Capture termination is missing or unknown")
     reader = csv.reader(chain((header,), lines), strict=True)
-    columns = next(reader)
+    try:
+        columns = next(reader)
+    except StopIteration as error:
+        raise ValueError("No trace column header") from error
     missing = set(NATIVE_COLUMNS) - set(columns)
-    if len(columns) != len(set(columns)) or missing:
+    if (not columns or any(not column for column in columns)
+            or len(columns) != len(set(columns)) or missing):
         raise ValueError(f"Trace column header is invalid. Missing: {', '.join(sorted(missing))}")
     events = []
     completed = False
