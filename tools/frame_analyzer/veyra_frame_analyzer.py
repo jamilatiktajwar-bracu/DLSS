@@ -395,11 +395,16 @@ def sample_groups(rows):
         if row["phase"] != "steady":
             continue
         scope = (row["session"], row["epoch"], row["revision"], row["role"])
-        samples = list(row["metrics_ms"].items())
-        samples += [(f'{st["domain"]}/{st["stage"]}', st["ms"]) for st in row["stages"]
-                    if st["ms"] is not None]
-        for name, value in samples:
-            all_groups[f'{row["role"]}/{name}'].append(value)
+        role_prefix = f'{row["role"]}/'
+        for name, value in row["metrics_ms"].items():
+            all_groups[role_prefix + name].append(value)
+            scoped_groups[scope, name].append((row, value))
+        for stage in row["stages"]:
+            value = stage["ms"]
+            if value is None:
+                continue
+            name = f'{stage["domain"]}/{stage["stage"]}'
+            all_groups[role_prefix + name].append(value)
             scoped_groups[scope, name].append((row, value))
     return all_groups, scoped_groups
 
