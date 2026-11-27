@@ -36,7 +36,7 @@ def write_synthetic_trace(path, frame_count):
             "# pid=4242\n"
             f"# host_ticks_per_second=10000000\n"
             f"# started_host={BASE}\n"
-            f"# ended_host={BASE + frame_count * TICKS_PER_FRAME}\n"
+            f"# ended_host={BASE + frame_count * TICKS_PER_FRAME + 50_000}\n"
             f"# requested_ms={max(1, round(frame_count * TICKS_PER_FRAME / 10000))}\n"
             f"# termination=duration\n"
             f"# recorded={event_count}\n"

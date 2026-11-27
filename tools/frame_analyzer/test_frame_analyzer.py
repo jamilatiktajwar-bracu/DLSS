@@ -11,7 +11,7 @@ from pathlib import Path
 from benchmark_frame_analyzer import (measure_peak_memory, positive_finite_float,
                                       run_once, write_synthetic_trace)
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
-                                  normalize_event, validate_output_paths, write_report)
+                                  normalize_event, output_records, sample_groups, validate_output_paths, write_report, annotate_gap_evidence)
 
 
 BASE = 70_000_000
@@ -162,6 +162,60 @@ class SyntheticBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["scope"], "python_tracemalloc_only")
 
 
+class SampleGroupingTests(unittest.TestCase):
+    def test_metrics_and_measured_stages_are_grouped_without_unmeasured_samples(self):
+        source = {"phase": "steady", "session": 1, "epoch": 2, "revision": 3,
+                  "role": "source", "metrics_ms": {"decode": 1.5},
+                  "stages": [{"domain": "gpu", "stage": "NR", "ms": 2.5},
+                             {"domain": "cpu", "stage": "wait", "ms": None}]}
+        output = {"phase": "steady", "session": 1, "epoch": 2, "revision": 3,
+                  "role": "output", "metrics_ms": {"present_api": 3.0},
+                  "stages": [{"domain": "cpu", "stage": "prepare", "ms": 0.5}]}
+        startup = {"phase": "startup", "session": 1, "epoch": 2, "revision": 3,
+                   "role": "source", "metrics_ms": {"decode": 99},
+                   "stages": [{"domain": "gpu", "stage": "NR", "ms": 99}]}
+        all_groups, scoped = sample_groups([source, output, startup])
+        self.assertEqual(dict(all_groups), {
+            "source/decode": [1.5], "source/gpu/NR": [2.5],
+            "output/present_api": [3.0], "output/cpu/prepare": [0.5]})
+        self.assertEqual(scoped[(1, 2, 3, "source"), "decode"], [(source, 1.5)])
+        self.assertEqual(scoped[(1, 2, 3, "source"), "gpu/NR"], [(source, 2.5)])
+        self.assertNotIn(((1, 2, 3, "source"), "cpu/wait"), scoped)
+class GapEvidenceTests(unittest.TestCase):
+    def test_anomaly_context_survives_missing_source_row(self):
+        row = {
+            "source_key": "1/2/3/4", "role": "output", "anomalies": [{"metric": "present_entry_interval"}],
+            "metrics_ms": {"present_entry_interval": 5.0}, "present_begin_host": 150,
+            "present_end_host": 155, "process_host": 120,
+        }
+        annotate_gap_evidence([row], {}, 1.0)
+        self.assertEqual(row["anomaly_context"]["source_measurements_ms"], {})
+        self.assertIsNone(row["anomaly_context"]["nearby_present_wall_ms"])
+        self.assertIsNone(row["anomaly_context"]["intersection_with_source_graph_wall_ms"])
+
+
+class OutputGroupingTests(unittest.TestCase):
+    def test_output_rows_reuse_nonterminal_event_numbers_and_cpu_samples(self):
+        key = (1, 2, 3, 4, 5, 6)
+        events = [
+            {"event": "FrameReady", "host": 100, "event_number": 1, "stage": "ready"},
+            {"event": "Cpu", "host": 110, "event_number": 2, "stage": "Prepare", "ms": 1.0},
+            {"event": "Present", "host": 120, "event_number": 3, "presentBeginHost": 115, "presentEndHost": 120},
+            {"event": "Discarded", "host": 130, "event_number": 4, "stage": "Deadline", "ms": 2.0},
+        ]
+        rows = list(output_records({key: events}, 100, .1, legacy=False))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["events"], [3, 1, 2])
+        self.assertEqual(rows[1]["events"], [4, 1, 2])
+        self.assertEqual(rows[0]["stages"], rows[1]["stages"])
+        self.assertIsNot(rows[0]["stages"], rows[1]["stages"])
+        rows[0]["stages"][0]["stage"] = "Mutated"
+        self.assertEqual(rows[0]["stages"][0]["stage"], "Mutated")
+        self.assertEqual(rows[1]["stages"][0]["stage"], "Prepare")
+        self.assertEqual(rows[0]["issues"], ["repeated_output_identity"])
+        self.assertEqual(rows[1]["issues"], ["repeated_output_identity"])
+
+
 class TraceTests(unittest.TestCase):
     def test_event_normalization_reuses_the_reader_record(self):
         raw = {"event": "Source", "host": "70001000", "session": "", "source": "4"}
@@ -169,6 +223,68 @@ class TraceTests(unittest.TestCase):
         self.assertIs(normalized, raw)
         self.assertEqual(normalized, {"event": "Source", "host": 70001000,
                                       "source": 4, "event_number": 1})
+
+    def test_event_numeric_fields_reject_nonfinite_and_malformed_values(self):
+        for value in ("nan", "inf", "-inf", "not-a-number"):
+            with self.subTest(value=value):
+                raw = {"event": "Cpu", "host": "70001000", "ms": value}
+                with self.assertRaisesRegex(ValueError, "Invalid ms"):
+                    normalize_event(raw, 1)
+        with self.assertRaisesRegex(ValueError, "Invalid host"):
+            normalize_event({"event": "Source", "host": "bad"}, 1)
+
+    def test_native_duplicate_metadata_rejected(self):
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
+        lines.insert(1, "# pid=99\n")
+        with self.assertRaisesRegex(ValueError, "Invalid trace metadata"):
+            read_native(io.StringIO("".join(lines)))
+
+    def test_native_host_capture_window_boundaries_are_inclusive(self):
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        columns = next(csv.reader([lines[header_index]]))
+        event_rows = list(csv.DictReader(lines[header_index:-1]))
+        event_rows[0]["host"] = str(BASE)
+        event_rows[-1]["host"] = str(BASE + 3_000_000)
+        output = io.StringIO()
+        output.write("".join(lines[:header_index]))
+        writer = csv.DictWriter(output, columns, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(event_rows)
+        output.write("# complete=1\n")
+        meta, events = read_native(io.StringIO(output.getvalue()))
+        self.assertEqual(events[0]["host"], meta["started_host"])
+        self.assertEqual(events[-1]["host"], meta["ended_host"])
+
+    def test_native_malformed_csv_quotes_rejected(self):
+        lines = example_trace().splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        lines[header_index + 1] = '"unterminated,broken\n'
+        with self.assertRaises(csv.Error):
+            read_native(io.StringIO("".join(lines)))
+
+    def test_native_completion_marker_must_be_terminal(self):
+        lines = example_trace().splitlines(keepends=True)
+        lines.append("unexpected,extra,row\n")
+        with self.assertRaisesRegex(ValueError, "after the trace completion"):
+            read_native(io.StringIO("".join(lines)))
+
+    def test_native_event_host_must_fall_inside_capture_window(self):
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        event_rows = list(csv.DictReader(lines[header_index:-1]))
+        event_rows[0]["host"] = str(BASE - 1)
+        output = io.StringIO()
+        output.write("".join(lines[:header_index]))
+        writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(event_rows)
+        output.write("# complete=1\n")
+        with self.assertRaisesRegex(ValueError, "outside the trace capture window"):
+            read_native(io.StringIO(output.getvalue()))
 
     def test_incomplete_matching_count_rejected(self):
         with self.assertRaisesRegex(ValueError, "complete=1"):
@@ -211,6 +327,38 @@ class TraceTests(unittest.TestCase):
         self.assertIn("readiness_sampled_after_present_entry", real["issues"])
         discarded = next(row for row in report["frames"] if row.get("status") == "discarded")
         self.assertEqual(discarded["anomalies"][0]["reasons"], ["output_deadline_expired"])
+
+    def test_legacy_header_counters_are_validated(self):
+        for header in (
+            "Frame trace: records=-1 capacity=10 overwritten=0",
+            "Frame trace: records=1 capacity=0 overwritten=0",
+            "Frame trace: records=1 capacity=10 overwritten=-1",
+            "Frame trace: records=11 capacity=10 overwritten=0",
+        ):
+            with self.subTest(header=header):
+                raw = header + "\n"
+                with self.assertRaisesRegex(ValueError, "Invalid legacy trace record counters"):
+                    read_legacy(io.StringIO(raw))
+
+    def test_legacy_duplicate_fields_rejected(self):
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
+               "event=Source host=5000000 session=1 source=2 source=3\n")
+        with self.assertRaisesRegex(ValueError, "Malformed legacy event record"):
+            read_legacy(io.StringIO(raw))
+
+    def test_legacy_malformed_token_rejected(self):
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
+               "event=Source host=5000000 session=1 malformed\n")
+        with self.assertRaisesRegex(ValueError, "Malformed legacy event record"):
+            read_legacy(io.StringIO(raw))
+
+    def test_legacy_event_with_leading_whitespace_is_not_silently_dropped(self):
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
+               "  event=Source host=5000000 session=1 source=2\n")
+        meta, events = read_legacy(io.StringIO(raw))
+        self.assertEqual(meta["recorded"], 1)
+        self.assertEqual(events[0]["event"], "Source")
+        self.assertEqual(events[0]["source"], 2)
 
     def test_legacy_overwrite_and_gpu_stage_map(self):
         raw = ("Veyra diagnostics\r\nFrame trace: records=2 capacity=8192 overwritten=25\r\n"

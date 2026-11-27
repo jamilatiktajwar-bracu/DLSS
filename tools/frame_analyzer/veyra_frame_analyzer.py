@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 SCHEMA = "veyra-frame-trace/1"
-LEGACY_HEADER = re.compile(r"Frame trace: records=(\d+) capacity=(\d+) overwritten=(\d+)")
+LEGACY_HEADER = re.compile(r"Frame trace: records=(-?\d+) capacity=(-?\d+) overwritten=(-?\d+)")
 NATIVE_COLUMNS = (
     "event host session revision epoch source batch fence pts detail count ms decodedHost "
     "processHost readyHost presentBeginHost presentEndHost entryDeviationMs returnDeviationMs "
@@ -107,9 +107,13 @@ def read_native(lines):
     if metadata.get("termination") not in ("duration", "shutdown"):
         raise ValueError("Capture termination is missing or unknown")
     reader = csv.reader(chain((header,), lines), strict=True)
-    columns = next(reader)
+    try:
+        columns = next(reader)
+    except StopIteration as error:
+        raise ValueError("No trace column header") from error
     missing = set(NATIVE_COLUMNS) - set(columns)
-    if len(columns) != len(set(columns)) or missing:
+    if (not columns or any(not column for column in columns)
+            or len(columns) != len(set(columns)) or missing):
         raise ValueError(f"Trace column header is invalid. Missing: {', '.join(sorted(missing))}")
     events = []
     completed = False
@@ -124,7 +128,10 @@ def read_native(lines):
         if len(row) != len(columns):
             raise ValueError(f"Invalid column count at CSV line {reader.line_num}")
         index += 1
-        events.append(normalize_event(dict(zip(columns, row)), index))
+        event = normalize_event(dict(zip(columns, row)), index)
+        if not metadata["started_host"] <= event["host"] <= metadata["ended_host"]:
+            raise ValueError(f"Event {index} host timestamp is outside the trace capture window")
+        events.append(event)
     if len(events) != metadata["recorded"]:
         raise ValueError(f"Incomplete trace: declared {metadata['recorded']} events, read {len(events)}")
     if not completed:
@@ -142,12 +149,21 @@ def read_legacy(lines):
             if header:
                 raise ValueError("Provide a single diagnostic snapshot")
             header = match
-        elif line.startswith("event="):
-            events.append(normalize_event(dict(token.split("=", 1) for token in line.split()),
-                                          len(events) + 1))
+        elif line.strip().startswith("event="):
+            # Accept harmless surrounding whitespace, but do not let a
+            # whitespace-prefixed event record disappear from the snapshot.
+            fields = {}
+            for token in line.strip().split():
+                key, separator, value = token.partition("=")
+                if not separator or not key or key in fields:
+                    raise ValueError(f"Malformed legacy event record at event {len(events) + 1}")
+                fields[key] = value
+            events.append(normalize_event(fields, len(events) + 1))
     if not header:
         raise ValueError("Expected a Veyra diagnostics snapshot or private Veyra CSV trace")
     recorded, capacity, overwritten = map(int, header.groups())
+    if recorded < 0 or capacity <= 0 or overwritten < 0 or recorded > capacity:
+        raise ValueError("Invalid legacy trace record counters")
     if recorded != len(events):
         raise ValueError(f"Incomplete diagnostic snapshot: declared {recorded} events, read {len(events)}")
     metadata = {"schema": "legacy-diagnostic-report", "host_ticks_per_second": 10_000_000,
@@ -221,9 +237,17 @@ def output_kind(event, legacy):
 def source_records(sources, host_origin, scale, legacy):
     for key, items in sources.items():
         items.sort(key=lambda item: item["host"])
-        inputs = [event for event in items if event["event"] == "Source"]
-        submits = [event for event in items if event["event"] == "Submitted"]
-        presents = [event for event in items if event["event"] == "Present"]
+        inputs, submits, presents, batch_readies = [], [], [], []
+        for event in items:
+            kind = event["event"]
+            if kind == "Source":
+                inputs.append(event)
+            elif kind == "Submitted":
+                submits.append(event)
+            elif kind == "Present":
+                presents.append(event)
+            elif kind == "Ready":
+                batch_readies.append(event)
         # A stage-only record can survive a bounded snapshot. Keep it as
         # unanchored evidence so it cannot silently extend frame coverage.
         anchor = (inputs or submits or presents or items)[0]
@@ -239,7 +263,6 @@ def source_records(sources, host_origin, scale, legacy):
                          if event["event"] != "Cpu" or event.get("stage") not in OUTPUT_CPU_STAGES
                          if (stage := stage_sample(event)) is not None]
         row["batches"] = sorted({event["batch"] for event in items if event.get("batch")})
-        batch_readies = [event for event in items if event["event"] == "Ready"]
         row["source_observations"] = len(inputs)
         row["graph_submissions"] = len(submits)
         row["fg_evaluated"] = sum(event.get("count", 0) for event in submits)
@@ -275,7 +298,11 @@ def output_records(outputs, host_origin, scale, legacy):
         items.sort(key=lambda item: item["host"])
         ready_observations = [event["host"] for event in items if event["event"] == "FrameReady"]
         terminal = [event for event in items if event["event"] in {"Present", "Discarded"}]
-        terminal_ids = {id(event) for event in terminal}
+        terminal_ids = {id(item) for item in terminal}
+        non_terminal_event_numbers = [item["event_number"] for item in items
+                                      if id(item) not in terminal_ids]
+        cpu_stage_samples = [sample for item in items if item["event"] == "Cpu"
+                             if (sample := stage_sample(item)) is not None]
         anchor = terminal or [event for event in items if event["event"] == "FrameReady"][:1] or items[:1]
         for event in anchor:
             present = event["event"] == "Present"
@@ -300,10 +327,9 @@ def output_records(outputs, host_origin, scale, legacy):
                 decoded_host=event.get("decodedHost") or None, process_host=event.get("processHost") or None,
             )
             row["frame_kind"] = output_kind(event, legacy)
-            row["stages"] = [sample for item in items if item["event"] == "Cpu"
-                             if (sample := stage_sample(item)) is not None]
-            row["events"] = [event["event_number"]] + [other["event_number"] for other in items
-                                                      if id(other) not in terminal_ids and other is not event]
+            row["stages"] = [dict(sample) for sample in cpu_stage_samples]
+            row["events"] = [event["event_number"]] + [number for number in non_terminal_event_numbers
+                                                       if number != event["event_number"]]
             if len(terminal) > 1:
                 row["issues"].append("repeated_output_identity")
             if not present and not discarded:
@@ -372,11 +398,16 @@ def sample_groups(rows):
         if row["phase"] != "steady":
             continue
         scope = (row["session"], row["epoch"], row["revision"], row["role"])
-        samples = list(row["metrics_ms"].items())
-        samples += [(f'{st["domain"]}/{st["stage"]}', st["ms"]) for st in row["stages"]
-                    if st["ms"] is not None]
-        for name, value in samples:
-            all_groups[f'{row["role"]}/{name}'].append(value)
+        role_prefix = f'{row["role"]}/'
+        for name, value in row["metrics_ms"].items():
+            all_groups[role_prefix + name].append(value)
+            scoped_groups[scope, name].append((row, value))
+        for stage in row["stages"]:
+            value = stage["ms"]
+            if value is None:
+                continue
+            name = f'{stage["domain"]}/{stage["stage"]}'
+            all_groups[role_prefix + name].append(value)
             scoped_groups[scope, name].append((row, value))
     return all_groups, scoped_groups
 
@@ -544,8 +575,8 @@ def annotate_gap_evidence(rows, source_by_key, scale):
     for row in rows:
         if not row["anomalies"]:
             continue
-        source = source_by_key[row["source_key"]]
-        context = {"source_measurements_ms": dict(source["metrics_ms"]),
+        source = source_by_key.get(row["source_key"])
+        context = {"source_measurements_ms": dict(source["metrics_ms"]) if source else {},
                    "nearby_present_wall_ms": None, "intersection_with_source_graph_wall_ms": None}
         latency = row["metrics_ms"].get("present_entry_interval")
         if latency is not None and row.get("present_begin_host"):
@@ -556,7 +587,7 @@ def annotate_gap_evidence(rows, source_by_key, scale):
                 gap_intersection = measured_delta(prior["present_begin_host"],
                     min(prior.get("present_end_host") or now, now), scale)
                 context["nearby_present_wall_ms"] = gap_intersection
-                if row.get("process_host") and source["metrics_ms"].get("graph_submit") is not None:
+                if source and row.get("process_host") and source["metrics_ms"].get("graph_submit") is not None:
                     process = row["process_host"]
                     graph_end = process + round(source["metrics_ms"]["graph_submit"] / scale)
                     context["intersection_with_source_graph_wall_ms"] = max(
