@@ -203,7 +203,7 @@ class TraceTests(unittest.TestCase):
     def test_native_event_host_must_fall_inside_capture_window(self):
         lines = example_trace().splitlines(keepends=True)
         header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
-        rows = list(csv.DictReader(lines[header_index:]))
+        rows = list(csv.DictReader(lines[header_index:-1]))
         rows[0]["host"] = str(BASE - 1)
         output = io.StringIO()
         output.write("".join(lines[:header_index]))
