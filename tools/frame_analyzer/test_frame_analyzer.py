@@ -11,7 +11,7 @@ from pathlib import Path
 from benchmark_frame_analyzer import (measure_peak_memory, positive_finite_float,
                                       run_once, write_synthetic_trace)
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
-                                  normalize_event, output_records, sample_groups, validate_output_paths, write_report)
+                                  normalize_event, output_records, sample_groups, validate_output_paths, write_report, annotate_gap_evidence)
 
 
 BASE = 70_000_000
@@ -181,6 +181,18 @@ class SampleGroupingTests(unittest.TestCase):
         self.assertEqual(scoped[(1, 2, 3, "source"), "decode"], [(source, 1.5)])
         self.assertEqual(scoped[(1, 2, 3, "source"), "gpu/NR"], [(source, 2.5)])
         self.assertNotIn(((1, 2, 3, "source"), "cpu/wait"), scoped)
+class GapEvidenceTests(unittest.TestCase):
+    def test_anomaly_context_survives_missing_source_row(self):
+        row = {
+            "source_key": "1/2/3/4", "role": "output", "anomalies": [{"metric": "present_entry_interval"}],
+            "metrics_ms": {"present_entry_interval": 5.0}, "present_begin_host": 150,
+            "present_end_host": 155, "process_host": 120,
+        }
+        annotate_gap_evidence([row], {}, 1.0)
+        self.assertEqual(row["anomaly_context"]["source_measurements_ms"], {})
+        self.assertIsNone(row["anomaly_context"]["nearby_present_wall_ms"])
+        self.assertIsNone(row["anomaly_context"]["intersection_with_source_graph_wall_ms"])
+
 
 class OutputGroupingTests(unittest.TestCase):
     def test_output_rows_reuse_nonterminal_event_numbers_and_cpu_samples(self):
