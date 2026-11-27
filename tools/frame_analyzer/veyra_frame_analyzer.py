@@ -237,9 +237,17 @@ def output_kind(event, legacy):
 def source_records(sources, host_origin, scale, legacy):
     for key, items in sources.items():
         items.sort(key=lambda item: item["host"])
-        inputs = [event for event in items if event["event"] == "Source"]
-        submits = [event for event in items if event["event"] == "Submitted"]
-        presents = [event for event in items if event["event"] == "Present"]
+        inputs, submits, presents, batch_readies = [], [], [], []
+        for event in items:
+            kind = event["event"]
+            if kind == "Source":
+                inputs.append(event)
+            elif kind == "Submitted":
+                submits.append(event)
+            elif kind == "Present":
+                presents.append(event)
+            elif kind == "Ready":
+                batch_readies.append(event)
         # A stage-only record can survive a bounded snapshot. Keep it as
         # unanchored evidence so it cannot silently extend frame coverage.
         anchor = (inputs or submits or presents or items)[0]
@@ -255,7 +263,6 @@ def source_records(sources, host_origin, scale, legacy):
                          if event["event"] != "Cpu" or event.get("stage") not in OUTPUT_CPU_STAGES
                          if (stage := stage_sample(event)) is not None]
         row["batches"] = sorted({event["batch"] for event in items if event.get("batch")})
-        batch_readies = [event for event in items if event["event"] == "Ready"]
         row["source_observations"] = len(inputs)
         row["graph_submissions"] = len(submits)
         row["fg_evaluated"] = sum(event.get("count", 0) for event in submits)
@@ -291,7 +298,6 @@ def output_records(outputs, host_origin, scale, legacy):
         items.sort(key=lambda item: item["host"])
         ready_observations = [event["host"] for event in items if event["event"] == "FrameReady"]
         terminal = [event for event in items if event["event"] in {"Present", "Discarded"}]
-        terminal_ids = {id(event) for event in terminal}
         anchor = terminal or [event for event in items if event["event"] == "FrameReady"][:1] or items[:1]
         for event in anchor:
             present = event["event"] == "Present"
