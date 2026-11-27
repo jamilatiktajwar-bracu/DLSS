@@ -212,6 +212,18 @@ class TraceTests(unittest.TestCase):
         discarded = next(row for row in report["frames"] if row.get("status") == "discarded")
         self.assertEqual(discarded["anomalies"][0]["reasons"], ["output_deadline_expired"])
 
+    def test_legacy_duplicate_fields_rejected(self):
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\\n"
+               "event=Source host=5000000 session=1 source=2 source=3\\n")
+        with self.assertRaisesRegex(ValueError, "Malformed legacy event record"):
+            read_legacy(io.StringIO(raw))
+
+    def test_legacy_malformed_token_rejected(self):
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\\n"
+               "event=Source host=5000000 session=1 malformed\\n")
+        with self.assertRaisesRegex(ValueError, "Malformed legacy event record"):
+            read_legacy(io.StringIO(raw))
+
     def test_legacy_overwrite_and_gpu_stage_map(self):
         raw = ("Veyra diagnostics\r\nFrame trace: records=2 capacity=8192 overwritten=25\r\n"
                "event=Gpu host=5000000 session=1 revision=8 epoch=2 source=42 batch=0 detail=3 ms=1.2\r\n"

@@ -143,8 +143,13 @@ def read_legacy(lines):
                 raise ValueError("Provide a single diagnostic snapshot")
             header = match
         elif line.startswith("event="):
-            events.append(normalize_event(dict(token.split("=", 1) for token in line.split()),
-                                          len(events) + 1))
+            fields = {}
+            for token in line.split():
+                key, separator, value = token.partition("=")
+                if not separator or not key or key in fields:
+                    raise ValueError(f"Malformed legacy event record at event {len(events) + 1}")
+                fields[key] = value
+            events.append(normalize_event(fields, len(events) + 1))
     if not header:
         raise ValueError("Expected a Veyra diagnostics snapshot or private Veyra CSV trace")
     recorded, capacity, overwritten = map(int, header.groups())
