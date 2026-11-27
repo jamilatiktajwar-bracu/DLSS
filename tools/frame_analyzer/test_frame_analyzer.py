@@ -11,7 +11,7 @@ from pathlib import Path
 from benchmark_frame_analyzer import (measure_peak_memory, positive_finite_float,
                                       run_once, write_synthetic_trace)
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
-                                  normalize_event, sample_groups, validate_output_paths, write_report)
+                                  normalize_event, output_records, sample_groups, validate_output_paths, write_report)
 
 
 BASE = 70_000_000
@@ -181,6 +181,24 @@ class SampleGroupingTests(unittest.TestCase):
         self.assertEqual(scoped[(1, 2, 3, "source"), "decode"], [(source, 1.5)])
         self.assertEqual(scoped[(1, 2, 3, "source"), "gpu/NR"], [(source, 2.5)])
         self.assertNotIn(((1, 2, 3, "source"), "cpu/wait"), scoped)
+
+class OutputGroupingTests(unittest.TestCase):
+    def test_output_rows_reuse_nonterminal_event_numbers_and_cpu_samples(self):
+        key = (1, 2, 3, 4, 5, 6)
+        events = [
+            {"event": "FrameReady", "host": 100, "event_number": 1, "stage": "ready"},
+            {"event": "Cpu", "host": 110, "event_number": 2, "stage": "Prepare", "ms": 1.0},
+            {"event": "Present", "host": 120, "event_number": 3, "presentBeginHost": 115, "presentEndHost": 120},
+            {"event": "Discarded", "host": 130, "event_number": 4, "stage": "Deadline", "ms": 2.0},
+        ]
+        rows = list(output_records({key: events}, 100, .1, legacy=False))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["events"], [3, 1, 2])
+        self.assertEqual(rows[1]["events"], [4, 1, 2])
+        self.assertEqual(rows[0]["stages"], rows[1]["stages"])
+        self.assertEqual(rows[0]["stages"][0]["stage"], "Prepare")
+        self.assertEqual(rows[0]["issues"], ["repeated_output_identity"])
+        self.assertEqual(rows[1]["issues"], ["repeated_output_identity"])
 
 
 class TraceTests(unittest.TestCase):
