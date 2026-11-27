@@ -237,8 +237,8 @@ class TraceTests(unittest.TestCase):
             read_legacy(io.StringIO(raw))
 
     def test_legacy_event_with_leading_whitespace_is_not_silently_dropped(self):
-        raw = ("Frame trace: records=1 capacity=10 overwritten=0\\n"
-               "  event=Source host=5000000 session=1 source=2\\n")
+        raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
+               "  event=Source host=5000000 session=1 source=2\n")
         meta, events = read_legacy(io.StringIO(raw))
         self.assertEqual(meta["recorded"], 1)
         self.assertEqual(events[0]["event"], "Source")
