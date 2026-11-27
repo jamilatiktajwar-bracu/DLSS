@@ -212,6 +212,18 @@ class TraceTests(unittest.TestCase):
         discarded = next(row for row in report["frames"] if row.get("status") == "discarded")
         self.assertEqual(discarded["anomalies"][0]["reasons"], ["output_deadline_expired"])
 
+    def test_legacy_header_counters_are_validated(self):
+        for header in (
+            "Frame trace: records=-1 capacity=10 overwritten=0",
+            "Frame trace: records=1 capacity=0 overwritten=0",
+            "Frame trace: records=1 capacity=10 overwritten=-1",
+            "Frame trace: records=11 capacity=10 overwritten=0",
+        ):
+            with self.subTest(header=header):
+                raw = header + "\n"
+                with self.assertRaisesRegex(ValueError, "Invalid legacy trace record counters"):
+                    read_legacy(io.StringIO(raw))
+
     def test_legacy_duplicate_fields_rejected(self):
         raw = ("Frame trace: records=1 capacity=10 overwritten=0\n"
                "event=Source host=5000000 session=1 source=2 source=3\n")
