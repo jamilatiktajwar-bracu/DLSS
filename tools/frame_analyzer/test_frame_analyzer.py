@@ -224,6 +224,39 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(normalized, {"event": "Source", "host": 70001000,
                                       "source": 4, "event_number": 1})
 
+    def test_event_numeric_fields_reject_nonfinite_and_malformed_values(self):
+        for value in ("nan", "inf", "-inf", "not-a-number"):
+            with self.subTest(value=value):
+                raw = {"event": "Cpu", "host": "70001000", "ms": value}
+                with self.assertRaisesRegex(ValueError, "Invalid ms"):
+                    normalize_event(raw, 1)
+        with self.assertRaisesRegex(ValueError, "Invalid host"):
+            normalize_event({"event": "Source", "host": "bad"}, 1)
+
+    def test_native_duplicate_metadata_rejected(self):
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
+        lines.insert(1, "# pid=99\\n")
+        with self.assertRaisesRegex(ValueError, "Invalid trace metadata"):
+            read_native(io.StringIO("".join(lines)))
+
+    def test_native_host_capture_window_boundaries_are_inclusive(self):
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
+        header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
+        event_rows = list(csv.DictReader(lines[header_index:-1]))
+        event_rows[0]["host"] = str(BASE)
+        event_rows[-1]["host"] = str(BASE + 3_000_000)
+        output = io.StringIO()
+        output.write("".join(lines[:header_index]))
+        writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\\n")
+        writer.writeheader()
+        writer.writerows(event_rows)
+        output.write("# complete=1\\n")
+        meta, events = read_native(io.StringIO(output.getvalue()))
+        self.assertEqual(events[0]["host"], meta["started_host"])
+        self.assertEqual(events[-1]["host"], meta["ended_host"])
+
     def test_native_duplicate_and_empty_column_names_rejected(self):
         trace = example_trace()
         lines = trace.splitlines(keepends=True)
