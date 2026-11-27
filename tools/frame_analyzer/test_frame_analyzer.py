@@ -201,15 +201,16 @@ class TraceTests(unittest.TestCase):
             read_native(io.StringIO("".join(lines)))
 
     def test_native_event_host_must_fall_inside_capture_window(self):
-        lines = example_trace().splitlines(keepends=True)
+        trace = example_trace()
+        lines = trace.splitlines(keepends=True)
         header_index = next(i for i, line in enumerate(lines) if line.startswith("event,"))
-        rows = list(csv.DictReader(lines[header_index:-1]))
-        rows[0]["host"] = str(BASE - 1)
+        event_rows = list(csv.DictReader(lines[header_index:-1]))
+        event_rows[0]["host"] = str(BASE - 1)
         output = io.StringIO()
         output.write("".join(lines[:header_index]))
         writer = csv.DictWriter(output, NATIVE_COLUMNS + ["presentCallHost"], lineterminator="\\n")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(event_rows)
         output.write("# complete=1\\n")
         with self.assertRaisesRegex(ValueError, "outside the trace capture window"):
             read_native(io.StringIO(output.getvalue()))
