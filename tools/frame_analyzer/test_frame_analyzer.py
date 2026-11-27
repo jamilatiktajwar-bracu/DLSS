@@ -11,7 +11,7 @@ from pathlib import Path
 from benchmark_frame_analyzer import (measure_peak_memory, positive_finite_float,
                                       run_once, write_synthetic_trace)
 from veyra_frame_analyzer import (NATIVE_COLUMNS, analyze, read_legacy, read_native,
-                                  normalize_event, validate_output_paths, write_report)
+                                  normalize_event, sample_groups, validate_output_paths, write_report)
 
 
 BASE = 70_000_000
@@ -160,6 +160,27 @@ class SyntheticBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["frame_rows"], 8)
         self.assertGreater(result["peak_traced_bytes"], 0)
         self.assertEqual(result["scope"], "python_tracemalloc_only")
+
+
+class SampleGroupingTests(unittest.TestCase):
+    def test_metrics_and_measured_stages_are_grouped_without_unmeasured_samples(self):
+        source = {"phase": "steady", "session": 1, "epoch": 2, "revision": 3,
+                  "role": "source", "metrics_ms": {"decode": 1.5},
+                  "stages": [{"domain": "gpu", "stage": "NR", "ms": 2.5},
+                             {"domain": "cpu", "stage": "wait", "ms": None}]}
+        output = {"phase": "steady", "session": 1, "epoch": 2, "revision": 3,
+                  "role": "output", "metrics_ms": {"present_api": 3.0},
+                  "stages": [{"domain": "cpu", "stage": "prepare", "ms": 0.5}]}
+        startup = {"phase": "startup", "session": 1, "epoch": 2, "revision": 3,
+                   "role": "source", "metrics_ms": {"decode": 99},
+                   "stages": [{"domain": "gpu", "stage": "NR", "ms": 99}]}
+        all_groups, scoped = sample_groups([source, output, startup])
+        self.assertEqual(dict(all_groups), {
+            "source/decode": [1.5], "source/gpu/NR": [2.5],
+            "output/present_api": [3.0], "output/cpu/prepare": [0.5]})
+        self.assertEqual(scoped[(1, 2, 3, "source"), "decode"], [(source, 1.5)])
+        self.assertEqual(scoped[(1, 2, 3, "source"), "gpu/NR"], [(source, 2.5)])
+        self.assertNotIn(((1, 2, 3, "source"), "cpu/wait"), scoped)
 
 
 class TraceTests(unittest.TestCase):
